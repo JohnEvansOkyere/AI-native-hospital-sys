@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:medicsgroupgh.com)",
+      "WebFetch(domain:ml-collective-africa.github.io)",
+      "WebFetch(domain:intron.io)",
+      "WebFetch(domain:docs.voice.intron.io)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(python3 -c \"import pyttsx3\")"
+    ]
+  }
+}

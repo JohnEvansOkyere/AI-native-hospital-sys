@@ -1,0 +1,38 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# Never commit real keys. .env.example is the template that IS committed.
+.env
+.env.*
+!.env.example
+backend/.env
+
+# ── Python ────────────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+*.log
+
+# ── Runtime data ──────────────────────────────────────────────────────────────
+# Demo database re-seeds itself; don't version a moving target.
+backend/veloxacare.db
+backend/voice_notes/
+benchmark/results/
+benchmark/manifest.csv
+
+# Recordings are consent-bound patient-adjacent audio — keep them out of git.
+# Share deliberately (the challenge's optional audio submission), never by accident.
+benchmark/audio/*
+!benchmark/audio/.gitkeep
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

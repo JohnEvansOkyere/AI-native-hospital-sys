@@ -1,0 +1,17 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+aiosqlite==0.20.0
+groq==0.13.0
+python-dotenv==1.0.1
+pydantic==2.9.2
+requests>=2.31
+python-multipart>=0.0.9
+
+# Speech-to-text providers. All three are optional and load lazily — the app
+# degrades to "I couldn't hear that, please type it" when none are available.
+# Install at least one for the voice demo:
+#   openai          -> hosted whisper-1   (needs OPENAI_API_KEY)
+#   faster-whisper  -> local open weights (needs no key, ~200MB, works offline)
+# Intron Sahara needs no package at all, just INTRON_API_KEY.
+openai>=1.30
+faster-whisper>=1.0

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VeloxaCare — Pitch Deck</title>
+<style>
+  :root{
+    --green:#10b981; --green-d:#047857; --ink:#0f172a; --muted:#64748b;
+    --bg:#f8fafc; --card:#ffffff; --red:#ef4444; --amber:#f59e0b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:#0b1220;color:var(--ink);overflow:hidden;
+  }
+  .deck{height:100vh;width:100vw;position:relative}
+  .slide{
+    position:absolute;inset:0;display:none;flex-direction:column;
+    justify-content:center;padding:8vh 10vw;background:var(--bg);
+    animation:fade .35s ease;
+  }
+  .slide.active{display:flex}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  .kicker{color:var(--green-d);font-weight:700;letter-spacing:.12em;
+    text-transform:uppercase;font-size:clamp(11px,1.1vw,14px);margin-bottom:18px}
+  h1{font-size:clamp(34px,5.6vw,76px);line-height:1.04;letter-spacing:-.02em}
+  h2{font-size:clamp(26px,3.6vw,46px);line-height:1.1;letter-spacing:-.02em;margin-bottom:24px}
+  p.lead{font-size:clamp(17px,1.9vw,26px);color:var(--muted);line-height:1.5;max-width:60ch}
+  .big{font-size:clamp(56px,10vw,150px);font-weight:800;line-height:1;letter-spacing:-.03em;color:var(--green-d)}
+  ul{list-style:none;margin-top:10px}
+  li{font-size:clamp(16px,1.9vw,26px);line-height:1.6;color:var(--ink);
+    display:flex;gap:14px;align-items:flex-start;margin:10px 0;max-width:58ch}
+  li b{color:var(--ink)}
+  li .dot{color:var(--green);font-weight:800;flex-shrink:0}
+  .muted{color:var(--muted)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:10px}
+  .card{background:var(--card);border:1px solid #e2e8f0;border-radius:18px;
+    padding:26px 28px;box-shadow:0 6px 24px rgba(15,23,42,.05)}
+  .card h3{font-size:clamp(17px,1.7vw,22px);margin-bottom:8px}
+  .card p{color:var(--muted);font-size:clamp(14px,1.4vw,18px);line-height:1.5}
+  .stat{display:flex;flex-direction:column;gap:6px}
+  .stat .n{font-size:clamp(34px,5vw,64px);font-weight:800;color:var(--green-d);line-height:1}
+  .stat .l{color:var(--muted);font-size:clamp(13px,1.3vw,17px)}
+  .row{display:flex;gap:40px;flex-wrap:wrap;margin-top:12px}
+  .flow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:20px}
+  .step{background:#fff;border:2px solid var(--green);color:var(--green-d);
+    font-weight:700;border-radius:999px;padding:12px 20px;font-size:clamp(13px,1.4vw,19px)}
+  .arrow{color:var(--green);font-size:24px;font-weight:800}
+  .pill{display:inline-block;background:#d1fae5;color:var(--green-d);
+    font-weight:700;border-radius:999px;padding:6px 16px;font-size:clamp(12px,1.2vw,16px);margin-bottom:20px}
+  .title-wrap{display:flex;flex-direction:column;gap:22px}
+  .logo{display:flex;align-items:center;gap:12px}
+  .logo .mark{width:46px;height:46px;border-radius:13px;background:var(--green-d);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:24px}
+  .logo .name{font-size:clamp(20px,2.2vw,30px);font-weight:800}
+  .quote{font-size:clamp(22px,3.2vw,44px);line-height:1.25;font-weight:600;max-width:24ch}
+  .accent{color:var(--green-d)}
+  .offer{background:linear-gradient(135deg,#047857,#10b981);color:#fff}
+  .offer .kicker{color:#bbf7d0}
+  .offer h2,.offer li,.offer li b,.offer .muted{color:#fff}
+  .offer .dot{color:#bbf7d0}
+
+  /* footer / nav */
+  .foot{position:absolute;bottom:22px;left:10vw;right:10vw;display:flex;
+    justify-content:space-between;align-items:center;color:var(--muted);
+    font-size:13px;font-weight:600}
+  .offer .foot{color:#bbf7d0}
+  .progress{position:absolute;top:0;left:0;height:4px;background:var(--green);transition:width .3s}
+  .hint{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
+    color:#94a3b8;font-size:12px;background:rgba(255,255,255,.7);
+    padding:5px 12px;border-radius:999px;border:1px solid #e2e8f0}
+  @media print{
+    body{overflow:visible}
+    .deck{height:auto}
+    .slide{display:flex!important;position:relative;height:100vh;page-break-after:always;break-after:page}
+    .hint{display:none}
+    .progress{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<div class="deck" id="deck">
+
+  <!-- 1. TITLE -->
+  <section class="slide active">
+    <div class="title-wrap">
+      <div class="logo"><div class="mark">♥</div><div class="name">VeloxaCare</div></div>
+      <h1>The nurse that follows<br>every patient <span class="accent">home.</span></h1>
+      <p class="lead">AI-powered patient follow-up on WhatsApp — keeping chronic-disease
+        patients on their medication after they leave the clinic.</p>
+    </div>
+    <div class="foot"><span>Patient Engagement Platform</span><span>Accra, Ghana</span></div>
+  </section>
+
+  <!-- 2. PROBLEM -->
+  <section class="slide">
+    <div class="kicker">The Problem</div>
+    <h2>Care stops at the clinic door.</h2>
+    <ul>
+      <li><span class="dot">→</span><span>Patients feel better, so they <b>stop taking their drugs.</b></span></li>
+      <li><span class="dot">→</span><span>They <b>can't afford the next refill</b> — and say nothing.</span></li>
+      <li><span class="dot">→</span><span>Blood pressure climbs <b>silently between visits.</b></span></li>
+      <li><span class="dot">→</span><span>Nurses have <b>no time</b> to follow up by phone.</span></li>
+      <li><span class="dot">→</span><span>You only find out <b>at the next visit</b> — if they show up.</span></li>
+    </ul>
+    <div class="foot"><span>VeloxaCare</span><span>2</span></div>
+  </section>
+
+  <!-- 3. THE INSIGHT -->
+  <section class="slide">
+    <div class="kicker">The Insight Everyone Misses</div>
+    <div class="row" style="align-items:center;gap:60px">
+      <div class="stat"><span class="big">96%</span></div>
+      <div style="max-width:30ch">
+        <p class="lead" style="color:var(--ink)">of Ghanaian patients who skip their
+        medication say the reason is <b class="accent">cost — not forgetting.</b></p>
+        <p class="muted" style="margin-top:16px;font-size:16px">A reminder bot fixes forgetting.
+        VeloxaCare detects <i>why</i> a patient slips — and acts on it.</p>
+      </div>
+    </div>
+    <div class="foot"><span>Source: Ghana primary-care study (PMC)</span><span>3</span></div>
+  </section>
+
+  <!-- 4. SOLUTION -->
+  <section class="slide">
+    <div class="kicker">The Solution</div>
+    <h2>One WhatsApp assistant. Zero apps to install.</h2>
+    <div class="grid">
+      <div class="card"><h3>💊 Daily reminders</h3><p>A gentle nudge each morning. Patients just reply YES.</p></div>
+      <div class="card"><h3>🩺 Weekly check-ins</h3><p>Blood-pressure readings captured in plain language.</p></div>
+      <div class="card"><h3>🧠 Reason detection</h3><p>Forgot? Cost? Side effect? Each routes to the right action.</p></div>
+      <div class="card"><h3>🚨 Live alerts</h3><p>Danger signs reach your nurse instantly — not weeks later.</p></div>
+    </div>
+    <div class="foot"><span>VeloxaCare</span><span>4</span></div>
+  </section>
+
+  <!-- 5. HOW IT WORKS -->
+  <section class="slide">
+    <div class="kicker">How It Works</div>
+    <h2>The loop that closes the gap.</h2>
+    <div class="flow">
+      <span class="step">Enroll in 30s</span><span class="arrow">→</span>
+      <span class="step">Daily reminder</span><span class="arrow">→</span>
+      <span class="step">Patient replies</span><span class="arrow">→</span>
+      <span class="step">AI reads why</span>
+    </div>
+    <div class="flow">
+      <span class="step">Flag the care team</span><span class="arrow">→</span>
+      <span class="step">Weekly doctor report</span><span class="arrow">→</span>
+      <span class="step">Patient keeps treatment</span>
+    </div>
+    <p class="muted" style="margin-top:26px;font-size:18px">All on the phone they already
+      own. All without adding work to your staff.</p>
+    <div class="foot"><span>VeloxaCare</span><span>5</span></div>
+  </section>
+
+  <!-- 6. DIFFERENTIATOR -->
+  <section class="slide">
+    <div class="kicker">What Makes It Different</div>
+    <h2>It understands <span class="accent">why</span>, then acts.</h2>
+    <div class="grid">
+      <div class="card"><h3>💸 "I can't afford it"</h3><p>→ Flags the nurse &amp; routes to an NHIS-covered alternative. Patient kept, sale kept.</p></div>
+      <div class="card"><h3>😅 "I forgot"</h3><p>→ Habit nudge &amp; gentle reminder routine.</p></div>
+      <div class="card"><h3>🤢 "It makes me dizzy"</h3><p>→ Immediate adverse-reaction flag to the care team.</p></div>
+      <div class="card"><h3>🩸 "170/110"</h3><p>→ Rule-based danger detection → live red alert. A human always decides.</p></div>
+    </div>
+    <div class="foot"><span>Safe by design: the AI never diagnoses.</span><span>6</span></div>
+  </section>
+
+  <!-- 7. PROOF -->
+  <section class="slide">
+    <div class="kicker">The Proof</div>
+    <h2>This is measured, not hoped for.</h2>
+    <div class="row" style="gap:70px;margin-top:20px">
+      <div class="stat"><span class="n">58%→68%</span><span class="l">adherence in a WhatsApp<br>diabetes/hypertension trial</span></div>
+      <div class="stat"><span class="n">+20%</span><span class="l">odds of staying in care<br>with daily messaging</span></div>
+      <div class="stat"><span class="n">½</span><span class="l">of chronic patients drop off<br>without follow-up</span></div>
+    </div>
+    <div class="foot"><span>Sources: PubMed RCT; NCBI HIV-care study</span><span>7</span></div>
+  </section>
+
+  <!-- 8. BUSINESS CASE -->
+  <section class="slide">
+    <div class="kicker">The Business Case</div>
+    <h2>Three winners. One of them pays.</h2>
+    <div class="grid">
+      <div class="card"><h3>🏥 The clinic</h3><p>Patients who stay in care come back. Retention you can measure — and better outcomes.</p></div>
+      <div class="card"><h3>💊 The pharmacy <span class="pill" style="margin:0">the payer</span></h3><p>A chronic patient = ~12 refills/year. Half drop off. We keep them refilling — and switch cost-blocked patients to your generic instead of losing the sale.</p></div>
+    </div>
+    <p class="muted" style="margin-top:22px;font-size:18px"><b class="accent">Pay per active patient.</b>
+      We make you more than we cost.</p>
+    <div class="foot"><span>VeloxaCare</span><span>8</span></div>
+  </section>
+
+  <!-- 9. OFFER -->
+  <section class="slide offer">
+    <div class="kicker">The Offer</div>
+    <h2>A free 60-day pilot.</h2>
+    <ul>
+      <li><span class="dot">✓</span><span>One condition — <b>hypertension.</b> 30 of your patients.</span></li>
+      <li><span class="dot">✓</span><span><b>We do the work.</b> You just get the weekly report.</span></li>
+      <li><span class="dot">✓</span><span>No setup cost. Nothing for your staff to learn.</span></li>
+      <li><span class="dot">✓</span><span>Day 60: we show retention vs. your normal drop-off.</span></li>
+      <li><span class="dot">✓</span><span><b>If it didn't help, you owe nothing.</b></span></li>
+    </ul>
+    <div class="foot"><span>VeloxaCare</span><span>9</span></div>
+  </section>
+
+  <!-- 10. ASK -->
+  <section class="slide">
+    <div class="title-wrap">
+      <div class="logo"><div class="mark">♥</div><div class="name">VeloxaCare</div></div>
+      <h1>Can we pick 30 patients<br>and <span class="accent">start Monday?</span></h1>
+      <p class="lead">One clinic. One condition. One proof.</p>
+    </div>
+    <div class="foot"><span>okyerevansjohn@gmail.com</span><span>Let's build it.</span></div>
+  </section>
+
+</div>
+<div class="hint" id="hint">← → to navigate · F fullscreen · P to print/PDF</div>
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  let i=0;
+  function show(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    document.getElementById('progress').style.width=((i+1)/slides.length*100)+'%';
+  }
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown')show(i+1);
+    else if(e.key==='ArrowLeft'||e.key==='PageUp')show(i-1);
+    else if(e.key==='Home')show(0);
+    else if(e.key==='End')show(slides.length-1);
+    else if(e.key.toLowerCase()==='f'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+    else if(e.key.toLowerCase()==='p')window.print();
+  });
+  document.getElementById('deck').addEventListener('click',e=>{
+    if(e.clientX > window.innerWidth/2) show(i+1); else show(i-1);
+  });
+  setTimeout(()=>document.getElementById('hint').style.opacity=0,6000);
+  document.getElementById('hint').style.transition='opacity 1s';
+  show(0);
+</script>
+</body>
+</html>

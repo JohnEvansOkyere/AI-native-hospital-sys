@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Impact Medical & Diagnostic Centre, Proposal by Ananse AI Labs</title>
+<style>
+  :root{--teal:#0d9488;--teal-d:#0f766e;--emer:#10b981;--ink:#0b1f1d;--muted:#5b6b69;
+    --bg:#f1faf8;--line:#d9ece8;--red:#ef4444;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:#bcd6d1;color:var(--ink);padding:24px;display:flex;justify-content:center}
+  .doc{width:820px;background:#fff;border-radius:16px;overflow:hidden;
+    box-shadow:0 10px 40px rgba(11,31,29,.2)}
+
+  /* brand banner */
+  .banner{background:linear-gradient(135deg,#0f766e,#10b981);color:#fff;padding:26px 36px;
+    display:flex;align-items:center;justify-content:space-between}
+  .banner .left{display:flex;align-items:center;gap:14px}
+  .banner .mark{width:46px;height:46px;border-radius:13px;background:rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;font-size:22px}
+  .banner h1{font-size:23px;letter-spacing:-.01em}
+  .banner .sub{font-size:12.5px;opacity:.92;margin-top:2px}
+  .banner .tag{background:rgba(255,255,255,.18);padding:7px 16px;border-radius:999px;
+    font-size:12px;font-weight:700;text-align:center;line-height:1.4}
+
+  .wrap{padding:32px 36px 40px}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px;font-size:12.5px;
+    color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:24px}
+  .meta b{color:var(--ink)}
+
+  h2{font-size:16px;color:var(--teal-d);margin:30px 0 12px;padding-bottom:6px;
+    border-bottom:2px solid #cdeae4;letter-spacing:-.01em}
+  h2:first-of-type{margin-top:0}
+  h3{font-size:13.5px;color:var(--ink);margin:16px 0 8px}
+  p{font-size:13px;line-height:1.6;color:#2f403d;margin:0 0 11px}
+  ul,ol{margin:0 0 12px 20px}
+  li{font-size:13px;line-height:1.6;color:#2f403d;margin-bottom:5px}
+  strong{color:var(--ink)}
+  em{color:var(--teal-d);font-style:italic}
+
+  .lead{background:#e6f7f3;border:1px solid #b9e4db;border-left:4px solid var(--teal);
+    border-radius:12px;padding:16px 18px;margin:0 0 6px}
+  .lead p{margin:0;font-size:13px;color:#125a52}
+
+  .punch{font-size:15px;font-weight:800;color:var(--ink);margin:4px 0 12px;line-height:1.45}
+
+  .money{background:#0b1f1d;color:#dcefea;border-radius:14px;padding:20px 24px;margin:8px 0 12px}
+  .money .h{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8fcabf;font-weight:700;margin-bottom:10px}
+  .money p{color:#c9e3dd;font-size:13px;margin:0 0 9px}
+  .money .big{font-size:20px;font-weight:800;color:#5eead4;margin:6px 0;line-height:1.35}
+  .money .small{font-size:11.5px;color:#8aa8a2;font-style:italic;margin:0}
+  .money strong{color:#fff}
+
+  table{width:100%;border-collapse:collapse;margin:6px 0 14px;font-size:12.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+  th{background:#e8f6f2;color:var(--teal-d);font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;font-weight:700}
+  td:first-child{font-weight:600;color:var(--ink);width:38%}
+  .glance td:first-child{width:42%}
+  tr:last-child td{border-bottom:none}
+
+  .pill{display:inline-block;background:#cdeae4;color:var(--teal-d);font-weight:700;
+    font-size:11px;padding:2px 9px;border-radius:999px}
+  .pill.red{background:#fee2e2;color:#b91c1c}
+
+  .ask{background:linear-gradient(135deg,#0f766e,#10b981);color:#fff;border-radius:14px;padding:22px 26px;margin:8px 0 6px}
+  .ask .q{font-size:16px;font-weight:800;line-height:1.5;color:#fff}
+  .ask .sub{font-size:12.5px;color:#d6f3ec;margin-top:10px}
+
+  .sign{display:grid;grid-template-columns:1fr 1fr;gap:14px 28px;margin-top:14px;font-size:12.5px}
+  .sline{border-bottom:1px solid #8aa8a2;height:26px;margin-top:4px}
+  .slabel{color:var(--muted);font-size:11px}
+
+  .contact{display:flex;align-items:center;gap:14px;background:#f4faf8;border:1px solid var(--line);
+    border-radius:12px;padding:16px 18px;margin-top:24px}
+  .contact .nm{font-weight:800;font-size:14px}
+  .contact .role{color:var(--teal-d);font-size:12px;font-weight:600}
+  .contact .det{margin-left:auto;text-align:right;font-size:12px;color:var(--muted);line-height:1.7}
+
+  .foot{background:#0b1f1d;color:#c9e3dd;padding:13px 36px;display:flex;
+    justify-content:space-between;font-size:11px}
+  .foot b{color:#fff}
+
+  .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:4px}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .doc{box-shadow:none;border-radius:0;width:100%}
+    h2{break-after:avoid}
+    table,.ask,.lead,.contact,.sign,.money{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- brand banner -->
+  <div class="banner">
+    <div class="left">
+      <div class="mark">🕸️</div>
+      <div>
+        <h1>Ananse AI Labs</h1>
+        <div class="sub">An intelligent WhatsApp assistant for Impact Medical &amp; Diagnostic Centre.</div>
+      </div>
+    </div>
+    <div class="tag">Pilot Proposal<br>Free · 60 Days</div>
+  </div>
+
+  <div class="wrap">
+
+    <!-- meta block -->
+    <div class="meta">
+      <div><b>Prepared for:</b> Impact Medical &amp; Diagnostic Centre</div>
+      <div><b>Prepared by:</b> John Evans Okyere, Ananse AI Labs</div>
+      <div><b>Attention:</b> Management / Medical Director</div>
+      <div><b>Date:</b> ____________________</div>
+      <div><b>Valid until:</b> ____________ (30 days from above)</div>
+      <div><b>Pilot scope:</b> one patient flow · 60 days · free</div>
+    </div>
+
+    <!-- at a glance -->
+    <h2>At a glance</h2>
+    <table class="glance">
+      <tr><td>What this is</td><td>An intelligent WhatsApp assistant for your patients, <strong>branded as Impact</strong>, that books, reminds, recalls, and follows up automatically.</td></tr>
+      <tr><td>What you gain</td><td>More returning patients across your specialties, fuller diagnostic slots, fewer no-shows, more repeat revenue, a lighter front desk.</td></tr>
+      <tr><td>The pilot</td><td>A <strong>free 60-day build and run</strong>, no cost to the clinic.</td></tr>
+      <tr><td>Cost to Impact</td><td><span class="pill">GHS 0</span> &nbsp;No setup fee, no software to buy, no hardware.</td></tr>
+      <tr><td>Work for your team</td><td>We build it, we run it. Your front desk does less, not more.</td></tr>
+      <tr><td>Your risk</td><td><span class="pill red">None</span> &nbsp;If patients don't come back by Day 60, you owe nothing and we walk away.</td></tr>
+      <tr><td>What we ask today</td><td>A short call so we can scope it. Nothing to sign, nothing to pay.</td></tr>
+    </table>
+
+    <div class="lead">
+      <p>You can say <strong>yes</strong> to this without spending a cedi or adding a task to your
+      front desk. You only decide to continue <strong>after</strong> you have seen the patients come back.</p>
+    </div>
+
+    <!-- 1. what Impact gains -->
+    <h2>1 · What Impact gains</h2>
+    <p>You have already built the hard part: a trusted, multi-specialty clinic that patients praise for
+    being seen in under 45 minutes, with sixteen specialties and full diagnostics under one roof. This
+    takes that strength and makes it <strong>compound</strong>, turning patients who visit once into
+    patients who stay with Impact for years. Here is what that looks like for the clinic:</p>
+    <ul>
+      <li><strong>More returning patients, across everything you offer.</strong> A patient who came for a dental scaling is reminded about their eye check and their wellness screening. More of each patient's care stays inside Impact, instead of going to three different clinics.</li>
+      <li><strong>Fuller specialist and diagnostic slots.</strong> Your 4D ultrasound, EEG, X-ray, and specialist hours are expensive capacity. Automatic recalls and reminders keep them booked, not idle.</li>
+      <li><strong>Fewer no-shows.</strong> Patients who get a friendly reminder show up. Every prevented no-show is a slot that earns instead of sitting empty.</li>
+      <li><strong>More repeat revenue.</strong> Every recall and follow-up is another consultation, scan, test, or procedure you would otherwise have lost, month after month.</li>
+      <li><strong>More referrals.</strong> A patient who still feels looked after a week after their visit tells their family. Your short-wait reputation already earns goodwill; this carries it home.</li>
+      <li><strong>A lighter front desk.</strong> Booking and the everyday questions are handled automatically, day or night, so your staff focus on the patients in front of them.</li>
+      <li><strong>A reputation that extends past the visit.</strong> The pleasant, stress-free experience you are known for no longer ends at the door. It follows the patient home, branded as Impact.</li>
+    </ul>
+    <p class="punch">You keep more of the patients you already earned, you fill more of the slots you
+    already have, and your team does less to make it happen.</p>
+
+    <!-- 2. how it works -->
+    <h2>2 · How it works: your Impact-branded WhatsApp assistant</h2>
+    <p>WhatsApp is already how your patients reach you. Ananse AI Labs makes it <strong>intelligent</strong>,
+    an assistant branded as Impact that stays with every patient after they leave. It:</p>
+    <ol>
+      <li><strong>Books appointments 24/7</strong>, day or night, weekend or holiday, the moment a patient thinks of it, without tying up your front desk.</li>
+      <li><strong>Reminds patients of their appointments</strong> so far fewer no-shows leave your specialist and diagnostic slots empty.</li>
+      <li><strong>Recalls patients for what they are due</strong>, the antenatal scan, the physio session, the 6-month dental check, the chronic-care follow-up, the annual wellness screening, on time, every time.</li>
+      <li><strong>Answers the questions patients actually ask</strong>, <em>"What are your hours?" "Do you take my insurance?" "Do you do EEG / 4D scans / root canal?" "Where are you located?"</em>, instantly, on your behalf.</li>
+      <li><strong>Follows up after a visit or procedure</strong>, checks recovery, reminds about medication and next steps, and quietly flags anyone who needs your team's attention.</li>
+      <li><strong>Reminds patients of everything else you offer</strong>, so a single-service patient discovers the full range of Impact, all under one roof.</li>
+    </ol>
+    <p class="note">A safety boundary we will not cross: the assistant <strong>never diagnoses</strong> and
+    never replaces your clinicians. Anything clinical or urgent is escalated to your team, and in an
+    emergency the patient is told to seek emergency care. The AI only handles booking, reminders, recalls,
+    answers, and follow-up. Patient data is handled in line with Ghana's Data Protection Act, 2012 (Act 843).</p>
+
+    <!-- 3. money -->
+    <h2>3 · What this is worth, in money</h2>
+    <p>Every benefit above lands in the same place: returning patients and slots that get used. A
+    returning patient is another consultation, scan, test, or procedure across any of your sixteen
+    specialties; a prevented no-show is expensive diagnostic time earning instead of idle; a re-engaged
+    patient can use Impact for everything, for years.</p>
+
+    <div class="money">
+      <div class="h">Do the math with your own numbers (illustration)</div>
+      <p>Say just <strong>5 patients a day</strong> either no-show or never return for the follow-up, scan,
+      or screening they were due, and an average visit (consult plus a test or procedure) is worth
+      <strong>GHS 250.</strong></p>
+      <div class="big">Recovering them: 5 × GHS 250 = GHS 1,250 / day → ~GHS 32,000 / month → ~GHS 390,000 a year</div>
+      <p class="small">And that is before the lifetime value of a patient who could have used you for
+      everything, across every specialty, for years. Plug in your own numbers, the figure gets big fast.</p>
+    </div>
+    <p><strong>The pilot is free precisely so you can watch this happen with your own patients before you
+    pay anything.</strong></p>
+
+    <!-- 4. the gap -->
+    <h2>4 · The gap it closes today</h2>
+    <p>Right now, the moment a patient walks out, the connection breaks. The dental patient never hears
+    about your eye service. The antenatal mother misses her next 4D scan. A no-show leaves a diagnostic
+    slot empty for the day. Each one is a small leak. Together they are the difference between a patient
+    who visits once and a patient who stays with Impact for years. <strong>This closes that gap,
+    automatically, with no extra work for your team.</strong></p>
+
+    <!-- 5. objections -->
+    <h2>5 · Why this is easy to say yes to</h2>
+    <table>
+      <tr><th>The reflex</th><th>Why it doesn't apply here</th></tr>
+      <tr><td>"We already use WhatsApp."</td><td>You do, by hand, during working hours. This makes it intelligent and 24/7: it books, reminds, and recalls on its own, even at 8pm on a Saturday.</td></tr>
+      <tr><td>"We have no budget for this."</td><td>The pilot is <strong>completely free.</strong> You spend nothing to see the patients come back.</td></tr>
+      <tr><td>"Our front desk is already busy."</td><td>It takes work off them. The assistant handles booking and questions; your staff do less, not more.</td></tr>
+      <tr><td>"Is it safe? Will it give medical advice?"</td><td>It <strong>never</strong> diagnoses. Anything clinical or urgent goes to your team; emergencies are sent to emergency care.</td></tr>
+      <tr><td>"What about patient privacy?"</td><td>Data is protected and handled in line with Ghana's Data Protection Act (Act 843).</td></tr>
+      <tr><td>"What if it doesn't work for us?"</td><td>Then at Day 60 you stop. <strong>You owe nothing,</strong> and you'll have a clear before-and-after of how many patients came back.</td></tr>
+    </table>
+    <p><strong>The only thing you risk by trying is finding out how much more your clinic could be earning.</strong></p>
+
+    <!-- 6. pilot -->
+    <h2>6 · The pilot, exactly what happens</h2>
+    <p><strong>Scope:</strong> one patient flow you choose (e.g. booking and reminders across specialties, or recalls and follow-up for one or two departments) · 60 days · an Impact-branded WhatsApp assistant.</p>
+    <table>
+      <tr><th>Phase</th><th>When</th><th>What happens</th><th>Who</th></tr>
+      <tr><td>Scope</td><td>Day 0</td><td>A short call to pick the flow and the questions the assistant should master.</td><td>Together</td></tr>
+      <tr><td>Build</td><td>Days 1–10</td><td>We build it, branded as Impact, trained on your services, specialties, hours, and insurers.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Run</td><td>Days 10–60</td><td>The assistant books, reminds, recalls, answers, and follows up with your patients.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Review</td><td>Day 60</td><td>We compare returning patients and no-shows against your normal baseline.</td><td>Together</td></tr>
+    </table>
+    <p><strong>What "success" looks like, agreed up front.</strong> So the Day-60 decision is about facts, not opinions:</p>
+    <ol>
+      <li><strong>How many patients returned</strong> for follow-up, recalls, or another service, your retention.</li>
+      <li><strong>How many no-shows were prevented</strong> by reminders.</li>
+      <li><strong>Questions and bookings handled automatically</strong> without your front desk.</li>
+      <li><strong>The revenue those returning visits represent.</strong></li>
+    </ol>
+
+    <!-- 7. terms -->
+    <h2>7 · The terms, deliberately simple</h2>
+    <ul>
+      <li><strong>Cost during the pilot:</strong> GHS 0. No setup fee, no licence, no hardware.</li>
+      <li><strong>Commitment during the pilot:</strong> none. You may stop at any time.</li>
+      <li><strong>At Day 60:</strong> if patients came back, we sit down and agree the simplest way forward. If they didn't, we part as friends and you owe nothing.</li>
+      <li><strong>Your data is yours.</strong> At any point you can ask us to delete it.</li>
+      <li><strong>No exclusivity, no lock-in, no auto-renewal.</strong> Continuing is a fresh decision you make <em>after</em> seeing the patients return.</li>
+    </ul>
+
+    <!-- 8. needs -->
+    <h2>8 · What we need from you to start</h2>
+    <ol>
+      <li><strong>A short call</strong> to scope the pilot.</li>
+      <li><strong>One patient flow</strong> to start with.</li>
+      <li><strong>A point of contact</strong> on your side, usually a front-desk lead or administrator.</li>
+    </ol>
+    <p>No payment, no long onboarding. We can scope it this week and start the build immediately.</p>
+
+    <!-- 9. ask -->
+    <h2>9 · The ask</h2>
+    <div class="ask">
+      <div class="q">Can we get on a 20-minute call this week to scope a free 60-day pilot?</div>
+      <div class="sub">You won't decide on this from a document. You'll decide from your own schedule in 60 days, at no cost and no risk. I am one call away.</div>
+    </div>
+
+    <!-- contact -->
+    <div class="contact">
+      <div>
+        <div class="nm">John Evans Okyere</div>
+        <div class="role">Ananse AI Labs</div>
+      </div>
+      <div class="det">
+        📞 0544954643<br>
+        ✉️ okyerevansjohn@gmail.com
+      </div>
+    </div>
+
+    <!-- acceptance -->
+    <h2>Acceptance <span style="font-weight:400;font-size:12px;color:var(--muted)">(optional, for your records)</span></h2>
+    <p style="font-size:12.5px">By signing below, Impact Medical &amp; Diagnostic Centre agrees to begin a
+    free 60-day pilot with Ananse AI Labs. There is no cost and no obligation to continue beyond Day 60.</p>
+    <div class="sign">
+      <div><div class="slabel">Authorised by (name &amp; role)</div><div class="sline"></div></div>
+      <div><div class="slabel">Date</div><div class="sline"></div></div>
+      <div><div class="slabel">Signature</div><div class="sline"></div></div>
+      <div><div class="slabel">Email / phone</div><div class="sline"></div></div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <span><b>Ananse AI Labs</b> — intelligent WhatsApp agents for Ghanaian businesses.</span>
+    <span>Free 60-day pilot · No cost · No obligation</span>
+  </div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rivia Clinics, Proposal by Ananse AI Labs</title>
+<style>
+  :root{--indigo:#4f46e5;--violet:#7c3aed;--ink:#0b1020;--muted:#64748b;
+    --bg:#f4f4fb;--line:#e6e6f2;--cyan:#06b6d4;--emer:#10b981;--red:#ef4444;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:#cbd0e0;color:var(--ink);padding:24px;display:flex;justify-content:center}
+  .doc{width:820px;background:#fff;border-radius:16px;overflow:hidden;
+    box-shadow:0 10px 40px rgba(15,16,32,.22)}
+
+  /* brand banner */
+  .banner{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;padding:26px 36px;
+    display:flex;align-items:center;justify-content:space-between}
+  .banner .left{display:flex;align-items:center;gap:14px}
+  .banner .mark{width:46px;height:46px;border-radius:13px;background:rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;font-size:22px}
+  .banner h1{font-size:23px;letter-spacing:-.01em}
+  .banner .sub{font-size:12.5px;opacity:.92;margin-top:2px}
+  .banner .tag{background:rgba(255,255,255,.18);padding:7px 16px;border-radius:999px;
+    font-size:12px;font-weight:700;text-align:center;line-height:1.4}
+
+  .wrap{padding:32px 36px 40px}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px;font-size:12.5px;
+    color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:24px}
+  .meta b{color:var(--ink)}
+
+  h2{font-size:16px;color:var(--indigo);margin:30px 0 12px;padding-bottom:6px;
+    border-bottom:2px solid #e0defb;letter-spacing:-.01em}
+  h2:first-of-type{margin-top:0}
+  h3{font-size:13.5px;color:var(--ink);margin:16px 0 8px}
+  p{font-size:13px;line-height:1.6;color:#33384d;margin:0 0 11px}
+  ul,ol{margin:0 0 12px 20px}
+  li{font-size:13px;line-height:1.6;color:#33384d;margin-bottom:5px}
+  strong{color:var(--ink)}
+  em{color:var(--violet);font-style:italic}
+
+  .lead{background:#f0effe;border:1px solid #d6d2fb;border-left:4px solid var(--indigo);
+    border-radius:12px;padding:16px 18px;margin:0 0 6px}
+  .lead p{margin:0;font-size:13px;color:#3b3370}
+
+  .punch{font-size:15px;font-weight:800;color:var(--ink);margin:4px 0 12px;line-height:1.45}
+
+  .money{background:#0b1020;color:#dfe1f0;border-radius:14px;padding:20px 24px;margin:8px 0 12px}
+  .money .h{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#a5a0e0;font-weight:700;margin-bottom:10px}
+  .money p{color:#cdd0e8;font-size:13px;margin:0 0 9px}
+  .money .big{font-size:20px;font-weight:800;color:#a78bfa;margin:6px 0;line-height:1.35}
+  .money .small{font-size:11.5px;color:#9aa0c0;font-style:italic;margin:0}
+  .money strong{color:#fff}
+
+  table{width:100%;border-collapse:collapse;margin:6px 0 14px;font-size:12.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+  th{background:#f2f1fd;color:var(--indigo);font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;font-weight:700}
+  td:first-child{font-weight:600;color:var(--ink);width:38%}
+  .glance td:first-child{width:42%}
+  tr:last-child td{border-bottom:none}
+
+  .pill{display:inline-block;background:#e0defb;color:var(--indigo);font-weight:700;
+    font-size:11px;padding:2px 9px;border-radius:999px}
+  .pill.red{background:#fee2e2;color:#b91c1c}
+
+  .ask{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-radius:14px;padding:22px 26px;margin:8px 0 6px}
+  .ask .q{font-size:16px;font-weight:800;line-height:1.5;color:#fff}
+  .ask .sub{font-size:12.5px;color:#e4e2fb;margin-top:10px}
+
+  .sign{display:grid;grid-template-columns:1fr 1fr;gap:14px 28px;margin-top:14px;font-size:12.5px}
+  .sline{border-bottom:1px solid #9aa0c0;height:26px;margin-top:4px}
+  .slabel{color:var(--muted);font-size:11px}
+
+  .contact{display:flex;align-items:center;gap:14px;background:#f7f7fc;border:1px solid var(--line);
+    border-radius:12px;padding:16px 18px;margin-top:24px}
+  .contact .nm{font-weight:800;font-size:14px}
+  .contact .role{color:var(--indigo);font-size:12px;font-weight:600}
+  .contact .det{margin-left:auto;text-align:right;font-size:12px;color:var(--muted);line-height:1.7}
+
+  .foot{background:#0b1020;color:#cdd0e8;padding:13px 36px;display:flex;
+    justify-content:space-between;font-size:11px}
+  .foot b{color:#fff}
+
+  .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:4px}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .doc{box-shadow:none;border-radius:0;width:100%}
+    h2{break-after:avoid}
+    table,.ask,.lead,.contact,.sign,.money{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- brand banner -->
+  <div class="banner">
+    <div class="left">
+      <div class="mark">🕸️</div>
+      <div>
+        <h1>Ananse AI Labs</h1>
+        <div class="sub">An intelligent WhatsApp concierge for Rivia Clinics members.</div>
+      </div>
+    </div>
+    <div class="tag">Pilot Proposal<br>Free · 60 Days</div>
+  </div>
+
+  <div class="wrap">
+
+    <!-- meta block -->
+    <div class="meta">
+      <div><b>Prepared for:</b> Rivia Clinics</div>
+      <div><b>Prepared by:</b> John Evans Okyere, Ananse AI Labs</div>
+      <div><b>Attention:</b> Growth / Operations Leadership</div>
+      <div><b>Date:</b> ____________________</div>
+      <div><b>Valid until:</b> ____________ (30 days from above)</div>
+      <div><b>Pilot scope:</b> one member cohort · 60 days · free</div>
+    </div>
+
+    <!-- at a glance -->
+    <h2>At a glance</h2>
+    <table class="glance">
+      <tr><td>What this is</td><td>An intelligent WhatsApp AI concierge for your members and prospects, <strong>branded as Rivia</strong>, that understands intent instead of issuing tickets.</td></tr>
+      <tr><td>What it does for you</td><td>Higher member engagement and care-value utilisation, which is what makes companies renew and refer.</td></tr>
+      <tr><td>The pilot</td><td>A <strong>free 60-day build and run</strong> for one member cohort or client company.</td></tr>
+      <tr><td>Cost to Rivia</td><td><span class="pill">GHS 0</span> &nbsp;No setup fee, no software to buy, no integration bill.</td></tr>
+      <tr><td>Work for your team</td><td>We build it, we run it. Your team reviews the results.</td></tr>
+      <tr><td>Your risk</td><td><span class="pill red">None</span> &nbsp;If engagement doesn't move by Day 60, you owe nothing and we walk away.</td></tr>
+      <tr><td>What we ask today</td><td>A short call to scope the pilot. Nothing to sign, nothing to pay.</td></tr>
+    </table>
+
+    <div class="lead">
+      <p>You can say <strong>yes</strong> to this without spending a cedi. You only decide to
+      continue <strong>after</strong> you have seen your members engage.</p>
+    </div>
+
+    <!-- 1. the moment -->
+    <h2>1 · I became your customer for a moment, here is what I felt</h2>
+    <p>I reached out to Rivia about improving member engagement on WhatsApp.</p>
+    <p>Your email replied by opening a <strong>support ticket</strong> for me. And when I
+    followed up on WhatsApp at midnight, the reply came <strong>seven hours later, at 7am.</strong></p>
+    <p>I was not reporting a fault, and I was awake at midnight ready to talk. I was a prospect
+    with intent, and your front door was both <strong>slow</strong> and <em>not intelligent enough
+    to know the difference.</em> A member with a question at midnight, a worried parent, a prospect
+    ready to enrol, all of them wait until morning, if they wait at all.</p>
+    <p class="punch">You sell experience. That moment was the opposite of the experience you sell.</p>
+    <p>A company that calls itself <em>anti-healthcare</em>, that wrote a whole memo on how the old
+    way is broken, that publishes <em>"Healthcare Coverage Is Not Enough; Experience Is What Matters",</em>
+    cannot afford a first touchpoint that treats people like tickets and answers them seven hours late.</p>
+
+    <!-- 2. the leak -->
+    <h2>2 · The leak this points to</h2>
+    <p>That ticket was not a one-off bug. It is a symptom of where you are most exposed:</p>
+    <ul>
+      <li><strong>Your front door is slow and dumb.</strong> Prospects and members who reach out get routed, queued, ticketed, or answered seven hours later, instead of understood in the moment. Some, like me, were ready to do business at midnight. How many simply went quiet by morning?</li>
+      <li><strong>Your members underuse the very benefit you sold them.</strong> You unlock up to GHS 4,000 in care value per employee. But care value only becomes loyalty when a member <em>uses</em> it. A member who forgets they have it, doesn't know their balance, can't find the nearest clinic, or never activates their card, is a member who felt nothing this year.</li>
+      <li><strong>A member who felt nothing is a renewal you lose.</strong> Companies renew Rivia when their people <em>felt the value.</em> Silent, unengaged members are exactly the ones who make an HR manager question the spend when the invoice arrives.</li>
+      <li><strong>Your virtual-care and support staff spend their day on repetitive questions</strong> that an intelligent agent could answer instantly, so your clinicians can focus on actual care.</li>
+    </ul>
+
+    <!-- 3. what we propose -->
+    <h2>3 · What we propose: a Rivia-branded WhatsApp concierge</h2>
+    <p>WhatsApp is where Ghanaians already are. Ananse AI Labs builds you an <strong>intelligent
+    WhatsApp agent, branded as Rivia</strong>, that becomes the smart front door you are missing. It:</p>
+    <ol>
+      <li><strong>Understands intent, not tickets.</strong> A prospect is routed to your sales team, a member issue to care, a real emergency told to call emergency services. The right path, every time, the opposite of what I experienced.</li>
+      <li><strong>Onboards every new member.</strong> Walks them through activating their card and getting started, in minutes, in plain language, the moment they join.</li>
+      <li><strong>Answers the questions your members actually ask, 24/7.</strong> <em>"What's my care balance?" "Which clinic is nearest and what are its hours?" "Is this covered?" "How do I book a visit?" "How do I reach a doctor?"</em> Instantly, on your behalf, at midnight or noon.</li>
+      <li><strong>Drives members to use their care.</strong> Gentle, branded nudges that get members into your clinics and onto your free virtual care, turning unused care value into real visits.</li>
+      <li><strong>Routes to your free virtual care and triages politely.</strong> It never diagnoses; it guides members to the right Rivia service and escalates anything clinical to a human.</li>
+      <li><strong>Gives your team a clear view</strong> of what members are asking and where engagement is slipping, so you can act on it.</li>
+    </ol>
+    <p class="note">The safety boundary we will not cross: the agent <strong>never diagnoses</strong> and
+    never replaces your clinicians. Anything clinical or urgent is escalated to your team or, in an
+    emergency, to local emergency services, exactly as your own policy states. All data is handled in line
+    with Ghana's Data Protection Act, 2012 (Act 843), consistent with your existing registration with the
+    Data Protection Commission.</p>
+
+    <!-- 4. what this does -->
+    <h2>4 · What this does for Rivia</h2>
+    <p>This is the part that matters. An engaged member is a renewing client and a referral.</p>
+    <ul>
+      <li><strong>Higher utilisation.</strong> Members who know their balance, their nearest clinic, and how to reach a doctor actually use Rivia. Usage is what makes the benefit feel real.</li>
+      <li><strong>Higher renewals.</strong> When employees feel the value, HR renews without a fight. Engagement is the number that protects your recurring revenue.</li>
+      <li><strong>More referrals.</strong> Happy, well-served members and HR managers tell other companies. Your best growth channel is a member who felt looked after.</li>
+      <li><strong>A front door that converts.</strong> Prospects who message Rivia get an intelligent, instant response and a path to sales, instead of a ticket. You stop losing deals at hello.</li>
+      <li><strong>More clinical capacity at no extra cost.</strong> The agent absorbs repetitive questions, so your virtual-care doctors spend their time on care, not FAQs.</li>
+      <li><strong>The premium experience you charge for, finally matching your promise</strong> at every touchpoint.</li>
+    </ul>
+
+    <div class="money">
+      <div class="h">Do the math with your own numbers (illustration)</div>
+      <p>One corporate account of <strong>84 employees</strong> (the size of one of your named clients) at
+      <strong>GHS 1,500 per employee</strong> is <strong>GHS 126,000 of recurring revenue a year.</strong></p>
+      <p>If even a quarter of those employees reach renewal season having never meaningfully used their
+      benefit, those are the people who put that <strong>GHS 126,000 renewal at risk.</strong></p>
+      <div class="big">An engaged member is a renewed account. This protects six figures of recurring revenue per account, and you have several.</div>
+      <p class="small">The pilot is free precisely so you can watch engagement move on your own members before you pay anything.</p>
+    </div>
+
+    <!-- 5. objections -->
+    <h2>5 · Why this is hard to say no to</h2>
+    <table>
+      <tr><th>The reflex</th><th>Why it doesn't apply here</th></tr>
+      <tr><td>"We already have automation."</td><td>You do, and it issued me a ticket and replied seven hours later. This is the difference between automated and <em>intelligent,</em> and between slow and <em>instant.</em></td></tr>
+      <tr><td>"We have no budget for this."</td><td>The pilot is <strong>completely free.</strong> You spend nothing to see if it moves engagement.</td></tr>
+      <tr><td>"Our team is busy building."</td><td>We build and run it. Your team only reviews results. No integration project unless you want one.</td></tr>
+      <tr><td>"Is it safe? Will it give medical advice?"</td><td>It <strong>never</strong> diagnoses. Anything clinical or urgent goes to your team or emergency services, per your own policy.</td></tr>
+      <tr><td>"What about member data and privacy?"</td><td>Handled within Ghana's Data Protection Act (Act 843), consistent with your existing DPC registration.</td></tr>
+      <tr><td>"What if it doesn't work for us?"</td><td>Then at Day 60 you stop. <strong>You owe nothing,</strong> and you'll have real engagement data on your own members either way.</td></tr>
+    </table>
+    <p><strong>The only thing you risk by trying is finding out how many members, and renewals, you've been quietly losing.</strong></p>
+
+    <!-- 6. pilot -->
+    <h2>6 · The pilot, exactly what happens</h2>
+    <p><strong>Scope:</strong> one member cohort you choose (e.g. one client company's employees, or your next group of new members) · 60 days · a Rivia-branded WhatsApp concierge, plus optional intelligent intake for inbound messages.</p>
+    <table>
+      <tr><th>Phase</th><th>When</th><th>What happens</th><th>Who</th></tr>
+      <tr><td>Scope</td><td>Day 0</td><td>A short call to pick the cohort and the questions the agent should master.</td><td>Together</td></tr>
+      <tr><td>Build</td><td>Days 1–10</td><td>We build the concierge, branded as Rivia, trained on your services, plans, and clinics.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Run</td><td>Days 10–60</td><td>The agent serves members on WhatsApp: onboarding, answers, nudges, routing.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Review</td><td>Day 60</td><td>We compare engagement and utilisation against your normal baseline.</td><td>Together</td></tr>
+    </table>
+    <p><strong>What "success" looks like, agreed up front.</strong> So the Day-60 decision is about facts, not opinions:</p>
+    <ol>
+      <li><strong>Member engagement rate</strong>, how many of the cohort actually interacted and got helped.</li>
+      <li><strong>Care-value utilisation</strong>, did more members use their benefit because of the nudges.</li>
+      <li><strong>Questions resolved instantly</strong> without pulling in your staff.</li>
+      <li><strong>Intent handled correctly</strong>, prospects to sales, members to care, no more tickets for people who aren't reporting a fault.</li>
+    </ol>
+
+    <!-- 7. terms -->
+    <h2>7 · The terms, deliberately simple</h2>
+    <ul>
+      <li><strong>Cost during the pilot:</strong> GHS 0. No setup fee, no licence, no integration bill.</li>
+      <li><strong>Commitment during the pilot:</strong> none. You may stop at any time.</li>
+      <li><strong>At Day 60:</strong> if engagement moved, we sit down and agree the simplest way forward. If it didn't, we part as friends and you owe nothing.</li>
+      <li><strong>Your data is yours.</strong> At any point you can ask us to delete it.</li>
+      <li><strong>No exclusivity, no lock-in, no auto-renewal.</strong> Continuing is a fresh decision you make <em>after</em> seeing the results.</li>
+    </ul>
+
+    <!-- 8. needs -->
+    <h2>8 · What we need from you to start</h2>
+    <ol>
+      <li><strong>A short call</strong> to scope the pilot.</li>
+      <li><strong>One member cohort</strong> to start with.</li>
+      <li><strong>A point of contact</strong> on your side.</li>
+    </ol>
+    <p>No payment, no long onboarding. We can scope it this week and start the build immediately.</p>
+
+    <!-- 9. ask -->
+    <h2>9 · The ask</h2>
+    <div class="ask">
+      <div class="q">Can we get on a 20-minute call this week to scope a free 60-day pilot?</div>
+      <div class="sub">You won't decide on this from a document. You'll decide from your own members' engagement in 60 days, at no cost and no risk. I am one call away.</div>
+    </div>
+
+    <!-- contact -->
+    <div class="contact">
+      <div>
+        <div class="nm">John Evans Okyere</div>
+        <div class="role">Ananse AI Labs</div>
+      </div>
+      <div class="det">
+        📞 0544954643<br>
+        ✉️ okyerevansjohn@gmail.com
+      </div>
+    </div>
+
+    <!-- acceptance -->
+    <h2>Acceptance <span style="font-weight:400;font-size:12px;color:var(--muted)">(optional, for your records)</span></h2>
+    <p style="font-size:12.5px">By signing below, Rivia Clinics agrees to begin a free 60-day pilot with
+    Ananse AI Labs. There is no cost and no obligation to continue beyond Day 60.</p>
+    <div class="sign">
+      <div><div class="slabel">Authorised by (name &amp; role)</div><div class="sline"></div></div>
+      <div><div class="slabel">Date</div><div class="sline"></div></div>
+      <div><div class="slabel">Signature</div><div class="sline"></div></div>
+      <div><div class="slabel">Email / phone</div><div class="sline"></div></div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <span><b>Ananse AI Labs</b> — intelligent WhatsApp agents for Ghanaian businesses.</span>
+    <span>Free 60-day pilot · No cost · No obligation</span>
+  </div>
+
+</div>
+</body>
+</html>

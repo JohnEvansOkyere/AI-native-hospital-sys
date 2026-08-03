@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VeloxaCare — Dashboard Sample</title>
+<style>
+  :root{--green:#10b981;--green-d:#047857;--ink:#0f172a;--muted:#64748b;
+    --bg:#f1f5f9;--card:#fff;--red:#ef4444;--amber:#f59e0b;--line:#e2e8f0;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:#cbd5e1;color:var(--ink);padding:24px;display:flex;justify-content:center}
+  .page{width:1000px;background:var(--bg);border-radius:16px;overflow:hidden;
+    box-shadow:0 10px 40px rgba(0,0,0,.18)}
+
+  /* brand banner */
+  .banner{background:linear-gradient(135deg,#047857,#10b981);color:#fff;padding:22px 28px;
+    display:flex;align-items:center;justify-content:space-between}
+  .banner .left{display:flex;align-items:center;gap:12px}
+  .banner .mark{width:40px;height:40px;border-radius:11px;background:rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;font-size:20px}
+  .banner h1{font-size:22px;letter-spacing:-.01em}
+  .banner .sub{font-size:12px;opacity:.9}
+  .banner .tag{background:rgba(255,255,255,.16);padding:6px 14px;border-radius:999px;
+    font-size:12px;font-weight:700}
+
+  /* app top bar */
+  .topbar{background:#fff;border-bottom:1px solid var(--line);padding:10px 20px;
+    display:flex;align-items:center;justify-content:space-between;font-size:12px}
+  .topbar .stats{display:flex;gap:18px;color:var(--muted)}
+  .topbar .stats b{color:var(--ink)}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}
+  .g{background:var(--green)}.a{background:var(--amber)}.r{background:var(--red)}
+  .btns{display:flex;gap:8px}
+  .btn{font-size:11px;font-weight:700;padding:6px 12px;border-radius:8px}
+  .btn.green{background:var(--green-d);color:#fff}
+  .btn.dark{background:#1e293b;color:#fff}
+  .btn.alert{background:#fee2e2;color:#b91c1c}
+
+  /* layout */
+  .body{display:grid;grid-template-columns:230px 1fr 280px;gap:0}
+  .col{padding:14px}
+  .list{background:#fff;border-right:1px solid var(--line)}
+  .list .h{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;
+    letter-spacing:.06em;padding:4px 6px 10px}
+  .pt{display:flex;align-items:center;gap:10px;padding:9px 8px;border-radius:10px}
+  .pt.sel{background:#ecfdf5;border-left:3px solid var(--green)}
+  .av{width:34px;height:34px;border-radius:50%;color:#fff;font-weight:700;font-size:12px;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .pt .nm{font-size:12.5px;font-weight:600}
+  .pt .dr{font-size:10.5px;color:var(--muted)}
+  .pt .meta{margin-left:auto;text-align:right}
+  .badge{font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .badge.g{background:#d1fae5;color:#047857}.badge.a{background:#fef3c7;color:#b45309}
+  .badge.r{background:#fee2e2;color:#b91c1c}
+  .pct{font-size:10px;color:var(--muted);margin-top:2px}
+
+  /* center */
+  .center{display:flex;flex-direction:column;gap:12px}
+  .alertbar{background:#fff;border:1px solid #fecaca;border-radius:14px;padding:12px 14px}
+  .alertbar .t{font-size:12px;font-weight:700;color:#b91c1c;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .arow{display:flex;align-items:center;gap:10px;background:#fef2f2;border:1px solid #fecaca;
+    border-radius:10px;padding:8px 10px;font-size:11.5px}
+  .arow .who{font-weight:700}
+  .resolve{margin-left:auto;font-size:10px;background:#fff;border:1px solid var(--line);
+    padding:3px 9px;border-radius:7px;color:var(--muted)}
+  .pcard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px}
+  .pcard .nm{font-size:18px;font-weight:800}
+  .pcard .sub{font-size:11.5px;color:var(--muted);margin-bottom:14px}
+  .three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center}
+  .ring{width:56px;height:56px;border-radius:50%;margin:0 auto 4px;
+    background:conic-gradient(var(--green) 0 92%, #e2e8f0 92% 100%);
+    display:flex;align-items:center;justify-content:center}
+  .ring .in{width:42px;height:42px;border-radius:50%;background:#fff;display:flex;
+    align-items:center;justify-content:center;font-weight:800;font-size:13px;color:var(--green-d)}
+  .three .n{font-size:22px;font-weight:800}
+  .three .l{font-size:10px;color:var(--muted)}
+  .heat{margin-top:12px}
+  .heat .t{font-size:11px;font-weight:700;color:#334155;margin-bottom:6px}
+  .cells{display:flex;gap:4px}
+  .cell{flex:1;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px}
+  .cell.y{background:#34d399}.cell.c{background:#f87171}.cell.f{background:#93c5fd}.cell.n{background:#e2e8f0}
+
+  /* whatsapp */
+  .wa{background:#fff;border-left:1px solid var(--line);display:flex;flex-direction:column}
+  .wa .hd{background:#075E54;color:#fff;padding:10px 12px;display:flex;align-items:center;gap:8px}
+  .wa .hd .av{background:#128C7E}
+  .wa .hd .nm{font-size:12.5px;font-weight:700}
+  .wa .hd .on{font-size:10px;color:#bbf7d0}
+  .wa .msgs{background:#ECE5DD;padding:12px;display:flex;flex-direction:column;gap:8px;flex:1}
+  .bub{max-width:82%;padding:7px 10px;border-radius:10px;font-size:11.5px;line-height:1.35;box-shadow:0 1px 1px rgba(0,0,0,.06)}
+  .bub.in{background:#fff;align-self:flex-start;border-top-left-radius:2px}
+  .bub.out{background:#DCF8C6;align-self:flex-end;border-top-right-radius:2px}
+  .tagm{font-size:9px;font-weight:700;padding:1px 6px;border-radius:999px;background:#fee2e2;color:#b91c1c;margin-left:4px}
+
+  /* caption strip */
+  .caps{background:#fff;border-top:1px solid var(--line);padding:16px 24px;
+    display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  .cap .ic{font-size:18px}
+  .cap h4{font-size:12.5px;margin:4px 0 3px}
+  .cap p{font-size:11px;color:var(--muted);line-height:1.4}
+  .foot{background:#0f172a;color:#cbd5e1;padding:12px 24px;display:flex;
+    justify-content:space-between;font-size:11px}
+  .foot b{color:#fff}
+  @media print{body{background:#fff;padding:0}.page{box-shadow:none;border-radius:0;width:100%}}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- brand banner -->
+  <div class="banner">
+    <div class="left">
+      <div class="mark">♥</div>
+      <div><h1>VeloxaCare</h1><div class="sub">Patient follow-up that runs itself — on WhatsApp.</div></div>
+    </div>
+    <div class="tag">Dashboard Sample</div>
+  </div>
+
+  <!-- app topbar -->
+  <div class="topbar">
+    <div class="stats">
+      <span><span class="dot g"></span><b>3</b> on track</span>
+      <span><span class="dot a"></span><b>1</b> watch</span>
+      <span><span class="dot r"></span><b>2</b> urgent</span>
+      <span style="color:var(--green-d);font-weight:700">71% avg adherence</span>
+    </div>
+    <div class="btns">
+      <span class="btn alert">🔔 4 alerts</span>
+      <span class="btn green">📄 Weekly Report</span>
+      <span class="btn dark">+ Enroll Patient</span>
+    </div>
+  </div>
+
+  <!-- main body -->
+  <div class="body">
+
+    <!-- patient list -->
+    <div class="col list">
+      <div class="h">6 Patients</div>
+      <div class="pt sel">
+        <div class="av" style="background:#10b981">AO</div>
+        <div><div class="nm">Abena Owusu</div><div class="dr">Amlodipine</div></div>
+        <div class="meta"><span class="badge g">On Track</span><div class="pct">93%</div></div>
+      </div>
+      <div class="pt">
+        <div class="av" style="background:#f59e0b">AB</div>
+        <div><div class="nm">Ama Boateng</div><div class="dr">Amlodipine</div></div>
+        <div class="meta"><span class="badge a">Watch</span><div class="pct">80%</div></div>
+      </div>
+      <div class="pt">
+        <div class="av" style="background:#ef4444">KM</div>
+        <div><div class="nm">Kofi Mensah</div><div class="dr">Lisinopril</div></div>
+        <div class="meta"><span class="badge r">Urgent</span><div class="pct">31%</div></div>
+      </div>
+      <div class="pt">
+        <div class="av" style="background:#10b981">KA</div>
+        <div><div class="nm">Kwesi Ache…</div><div class="dr">Lisinopril+</div></div>
+        <div class="meta"><span class="badge g">On Track</span><div class="pct">92%</div></div>
+      </div>
+      <div class="pt">
+        <div class="av" style="background:#ef4444">KA</div>
+        <div><div class="nm">Kwame Asa…</div><div class="dr">Lisinopril</div></div>
+        <div class="meta"><span class="badge r">Urgent</span><div class="pct">48%</div></div>
+      </div>
+    </div>
+
+    <!-- center detail -->
+    <div class="col center">
+      <div class="alertbar">
+        <div class="t">⚠️ Active Alerts</div>
+        <div class="arow"><span class="dot r"></span><span class="who">Kofi Mensah</span> — Cost barrier: can't afford medication (9 days) <span class="resolve">Resolve</span></div>
+        <div class="arow" style="margin-top:6px"><span class="dot r"></span><span class="who">Kwame Asante</span> — Dangerously high BP reading: 168/102 <span class="resolve">Resolve</span></div>
+      </div>
+
+      <div class="pcard">
+        <div class="nm">Abena Owusu</div>
+        <div class="sub">52 yrs · hypertension · Dr. Ama Boateng</div>
+        <div class="three">
+          <div><div class="ring"><div class="in">92%</div></div><div class="l">14-day adherence</div></div>
+          <div><div class="n">8</div><div class="l">day streak 🔥</div></div>
+          <div><div class="n" style="color:var(--green-d)">128/82</div><div class="l">Last BP — in range</div></div>
+        </div>
+        <div class="heat">
+          <div class="t">Medication adherence — last 14 days</div>
+          <div class="cells">
+            <div class="cell y">✓</div><div class="cell y">✓</div><div class="cell y">✓</div>
+            <div class="cell f">·</div><div class="cell y">✓</div><div class="cell y">✓</div>
+            <div class="cell y">✓</div><div class="cell n"></div><div class="cell y">✓</div>
+            <div class="cell y">✓</div><div class="cell y">✓</div><div class="cell y">✓</div>
+            <div class="cell y">✓</div><div class="cell y">✓</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- whatsapp -->
+    <div class="wa">
+      <div class="hd">
+        <div class="av">KM</div>
+        <div><div class="nm">Kofi Mensah</div><div class="on">● +233 24 100 0002</div></div>
+      </div>
+      <div class="msgs">
+        <div class="bub out">Good morning Kofi! ☀️ Time for your Lisinopril 10mg. Reply YES when done.</div>
+        <div class="bub in">I haven't been able to buy it, the pharmacy is too expensive <span class="tagm">cost</span></div>
+        <div class="bub out">I understand, Kofi. 🏥 I've flagged this to your nurse right away — they'll reach out about an NHIS-covered alternative. Please don't stop your treatment.</div>
+        <div class="bub in">Ok thank you</div>
+        <div class="bub out">💙 You're not alone in this. We'll help you stay on track.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- captions -->
+  <div class="caps">
+    <div class="cap"><div class="ic">💊</div><h4>Automatic follow-up</h4><p>Daily reminders & check-ins on WhatsApp. No app for patients to install.</p></div>
+    <div class="cap"><div class="ic">🧠</div><h4>Knows the reason</h4><p>Detects why a patient slips — forgot, cost, side effect — and acts on each.</p></div>
+    <div class="cap"><div class="ic">🚨</div><h4>Early alerts</h4><p>Danger signs reach your care team instantly — not at the next visit.</p></div>
+    <div class="cap"><div class="ic">📄</div><h4>Pre-visit report</h4><p>A one-page summary of every patient before consultation. Zero staff effort.</p></div>
+  </div>
+
+  <div class="foot">
+    <span><b>VeloxaCare</b> — Patient Engagement Platform · Accra, Ghana</span>
+    <span>Free 60-day pilot · okyerevansjohn@gmail.com</span>
+  </div>
+
+</div>
+</body>
+</html>

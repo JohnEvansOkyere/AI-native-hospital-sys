@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Medics Group, Proposal by Ananse AI Labs</title>
+<style>
+  :root{--indigo:#1d4ed8;--violet:#2563eb;--ink:#0b1020;--muted:#64748b;
+    --bg:#f1f5fd;--line:#dde6f4;--cyan:#06b6d4;--emer:#10b981;--red:#ef4444;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:#c2cfe6;color:var(--ink);padding:24px;display:flex;justify-content:center}
+  .doc{width:820px;background:#fff;border-radius:16px;overflow:hidden;
+    box-shadow:0 10px 40px rgba(15,16,32,.22)}
+
+  /* brand banner */
+  .banner{background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;padding:26px 36px;
+    display:flex;align-items:center;justify-content:space-between}
+  .banner .left{display:flex;align-items:center;gap:14px}
+  .banner .mark{width:46px;height:46px;border-radius:13px;background:rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;font-size:22px}
+  .banner h1{font-size:23px;letter-spacing:-.01em}
+  .banner .sub{font-size:12.5px;opacity:.92;margin-top:2px}
+  .banner .tag{background:rgba(255,255,255,.18);padding:7px 16px;border-radius:999px;
+    font-size:12px;font-weight:700;text-align:center;line-height:1.4}
+
+  .wrap{padding:32px 36px 40px}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px;font-size:12.5px;
+    color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:24px}
+  .meta b{color:var(--ink)}
+
+  h2{font-size:16px;color:var(--indigo);margin:30px 0 12px;padding-bottom:6px;
+    border-bottom:2px solid #cfe0fb;letter-spacing:-.01em}
+  h2:first-of-type{margin-top:0}
+  h3{font-size:13.5px;color:var(--ink);margin:16px 0 8px}
+  p{font-size:13px;line-height:1.6;color:#33384d;margin:0 0 11px}
+  ul,ol{margin:0 0 12px 20px}
+  li{font-size:13px;line-height:1.6;color:#33384d;margin-bottom:5px}
+  strong{color:var(--ink)}
+  em{color:var(--violet);font-style:italic}
+
+  .lead{background:#e8f0fe;border:1px solid #c8dafb;border-left:4px solid var(--indigo);
+    border-radius:12px;padding:16px 18px;margin:0 0 6px}
+  .lead p{margin:0;font-size:13px;color:#1e3a8a}
+
+  .punch{font-size:15px;font-weight:800;color:var(--ink);margin:4px 0 12px;line-height:1.45}
+
+  .money{background:#0b1020;color:#dfe1f0;border-radius:14px;padding:20px 24px;margin:8px 0 12px}
+  .money .h{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#93b4f5;font-weight:700;margin-bottom:10px}
+  .money p{color:#cdd0e8;font-size:13px;margin:0 0 9px}
+  .money .big{font-size:20px;font-weight:800;color:#60a5fa;margin:6px 0;line-height:1.35}
+  .money .small{font-size:11.5px;color:#9aa0c0;font-style:italic;margin:0}
+  .money strong{color:#fff}
+
+  table{width:100%;border-collapse:collapse;margin:6px 0 14px;font-size:12.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+  th{background:#eaf1fd;color:var(--indigo);font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;font-weight:700}
+  td:first-child{font-weight:600;color:var(--ink);width:38%}
+  .glance td:first-child{width:42%}
+  tr:last-child td{border-bottom:none}
+
+  .pill{display:inline-block;background:#cfe0fb;color:var(--indigo);font-weight:700;
+    font-size:11px;padding:2px 9px;border-radius:999px}
+  .pill.red{background:#fee2e2;color:#b91c1c}
+
+  .ask{background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:14px;padding:22px 26px;margin:8px 0 6px}
+  .ask .q{font-size:16px;font-weight:800;line-height:1.5;color:#fff}
+  .ask .sub{font-size:12.5px;color:#dde8fe;margin-top:10px}
+
+  .sign{display:grid;grid-template-columns:1fr 1fr;gap:14px 28px;margin-top:14px;font-size:12.5px}
+  .sline{border-bottom:1px solid #9aa0c0;height:26px;margin-top:4px}
+  .slabel{color:var(--muted);font-size:11px}
+
+  .contact{display:flex;align-items:center;gap:14px;background:#f3f7fd;border:1px solid var(--line);
+    border-radius:12px;padding:16px 18px;margin-top:24px}
+  .contact .nm{font-weight:800;font-size:14px}
+  .contact .role{color:var(--indigo);font-size:12px;font-weight:600}
+  .contact .det{margin-left:auto;text-align:right;font-size:12px;color:var(--muted);line-height:1.7}
+
+  .foot{background:#0b1020;color:#cdd0e8;padding:13px 36px;display:flex;
+    justify-content:space-between;font-size:11px}
+  .foot b{color:#fff}
+
+  .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:4px}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .doc{box-shadow:none;border-radius:0;width:100%}
+    h2{break-after:avoid}
+    table,.ask,.lead,.contact,.sign,.money{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- brand banner -->
+  <div class="banner">
+    <div class="left">
+      <div class="mark">🩺</div>
+      <div>
+        <h1>Ananse AI Labs</h1>
+        <div class="sub">A WhatsApp care assistant for Medics Group patients.</div>
+      </div>
+    </div>
+    <div class="tag">Pilot Proposal<br>Free · 60 Days</div>
+  </div>
+
+  <div class="wrap">
+
+    <!-- meta block -->
+    <div class="meta">
+      <div><b>Prepared for:</b> Medics Group</div>
+      <div><b>Prepared by:</b> John Evans Okyere, Ananse AI Labs</div>
+      <div><b>Attention:</b> Medical Director / Administrator</div>
+      <div><b>Date:</b> ____________________</div>
+      <div><b>Valid until:</b> ____________ (30 days from above)</div>
+      <div><b>Pilot scope:</b> one patient group · 60 days · free</div>
+    </div>
+
+    <!-- at a glance -->
+    <h2>At a glance</h2>
+    <table class="glance">
+      <tr><td>What this is</td><td>A WhatsApp assistant that stays with each patient after they leave your building, <strong>under the Medics name</strong>, so the relationship you build in the consulting room continues at home.</td></tr>
+      <tr><td>What it does for you</td><td>More patients returning across your specialties, better-managed chronic and wellness patients, and corporate members who actually feel the value, without adding work for your staff.</td></tr>
+      <tr><td>The pilot</td><td>A <strong>free 60-day build and run</strong>, on one patient group you choose.</td></tr>
+      <tr><td>Cost to Medics</td><td><span class="pill">GHS 0</span> &nbsp;No setup fee, no software to buy, no hardware.</td></tr>
+      <tr><td>Work for your team</td><td>~30 seconds to enrol a patient after a visit. We build it and run everything else.</td></tr>
+      <tr><td>Your risk</td><td><span class="pill red">None</span> &nbsp;If patients don't engage and return by Day 60, you owe nothing and we walk away.</td></tr>
+      <tr><td>What we ask today</td><td>A short conversation to scope the pilot. Nothing to sign, nothing to pay.</td></tr>
+    </table>
+
+    <div class="lead">
+      <p>You can say <strong>yes</strong> to this without spending a cedi or adding a task to your
+      team's day. You only decide to continue <strong>after</strong> you have seen it work on your own patients.</p>
+    </div>
+
+    <!-- 1. why I am writing -->
+    <h2>1 · Why I am writing</h2>
+    <p>I visited your clinic, and your front desk kindly pointed me to this address to send a proposal.</p>
+    <p>What stood out, even from the outside, is how seriously Medics takes the <em>relationship</em> with a
+    patient. Your own words say it: <em>"Physician led, Patient Driven."</em> Care that is <em>"accessible,
+    integrated, and high-quality."</em> A place where people feel <em>"seen, heard, and valued,"</em> built on
+    <em>"meaningful relationships grounded in respect and clear communication."</em></p>
+    <p class="punch">That is exactly the kind of clinic this is built for. Because there is one place where even the best relationship quietly breaks down, the moment the patient walks out the door.</p>
+
+    <!-- 2. the gap -->
+    <h2>2 · The gap, even in a clinic that does everything right</h2>
+    <p>You have built something rare: many specialties, on-site labs, radiology, cardiac testing and rehab,
+    much of it same-day, all in one place. Inside your walls, the experience is excellent. But the moment a
+    patient leaves, that careful relationship goes quiet, and that is where the value leaks:</p>
+    <ul>
+      <li><strong>Chronic patients drift.</strong> Your cardiology, endocrinology and nephrology patients, the hypertension, diabetes and kidney cases, depend on what happens <em>between</em> visits. In Ghana, more than half of chronic patients don't take their medication as prescribed, and the number one reason is <strong>cost, not forgetting.</strong> The patient who can't afford the next refill rarely tells you, they just disappear.</li>
+      <li><strong>Preventive and wellness patients vanish.</strong> A check-up or wellness plan only works if the patient comes back on schedule. Most won't, on their own, and you find out only when they return much later, much sicker.</li>
+      <li><strong>You only see the patient when they choose to come.</strong> Between appointments you are blind, to who is slipping, who is confused, who is about to quietly become someone else's patient.</li>
+      <li><strong>Your corporate and insurance members underuse the benefit.</strong> The employees who forget they have Medics, or never book, are the ones who make HR question the spend at renewal, even though your care is excellent.</li>
+    </ul>
+    <p>None of this is a care problem. <strong>It is a "between visits" problem.</strong> And it is costing you returning patients across every specialty you run.</p>
+
+    <!-- 3. what it is -->
+    <h2>3 · What VeloxaCare really is, Medics in your patient's pocket</h2>
+    <p>VeloxaCare is not a reminder app. A reminder nobody checks is just a notification. It is <strong>your
+    clinic's own assistant that goes home with every patient</strong>, on WhatsApp, under <em>your</em> name. You
+    already use WhatsApp to receive messages; this makes WhatsApp work <em>for</em> you, intelligently and around
+    the clock. After every visit, your patient keeps hearing from <strong>Medics</strong>:</p>
+    <ol>
+      <li><strong>It keeps patients on their treatment, and notices why they slip.</strong> Reminders to take medication and complete care, plus, the part that matters, when a patient stops it detects <em>why</em>: forgot, cost, side-effect, ran out, or confused. <strong>Cost and side-effect barriers are flagged to your team</strong> so you can act, switch them to an affordable or NHIS-covered option, reassure them, before you lose them.</li>
+      <li><strong>It brings preventive and wellness patients back on schedule.</strong> Gentle, branded nudges that fill your check-up and wellness slots instead of leaving them empty.</li>
+      <li><strong>It answers the questions patients actually have, 24/7.</strong> <em>"Can I take this with food?" "Is this side effect normal?" "When do I come back?" "What are your hours?"</em> Instantly, in plain language, on your behalf.</li>
+      <li><strong>It gives condition-specific guidance you approve.</strong> The diet, lifestyle and do's-and-don'ts advice your physicians would give every patient if there were time, within safe limits <em>you</em> set.</li>
+      <li><strong>It hands your team a one-page view</strong> before clinic, who is on track, who is at risk, and why, ranked, with no extra work for your staff.</li>
+      <li><strong>For corporate and insurance members, it drives them to actually use Medics</strong>, onboarding them, reminding them of their cover, and nudging them to book, so the benefit gets used and the account renews.</li>
+    </ol>
+    <p class="note">The safety boundary we will not cross: VeloxaCare <strong>never diagnoses</strong> and never
+    replaces your physicians' judgement. Any danger sign, a high blood-pressure reading, a worrying symptom, is
+    flagged to your team by <strong>fixed clinical rules. A human always decides.</strong> The AI only reminds,
+    classifies, and summarizes. Patient data stays visible only to your care team, in line with Ghana's Data
+    Protection Act, 2012 (Act 843).</p>
+
+    <h3>It fits every specialty you run</h3>
+    <table>
+      <tr><th>Your service</th><th>What VeloxaCare keeps them coming back for</th></tr>
+      <tr><td>Cardiology / Endocrinology / Nephrology</td><td>Medication adherence, BP and sugar monitoring, follow-up visits.</td></tr>
+      <tr><td>Family &amp; Internal Medicine</td><td>Long-term treatment, repeat consultations, check-ups.</td></tr>
+      <tr><td>Preventive care &amp; Wellness</td><td>Scheduled check-ups, screening recalls, healthy-habit guidance.</td></tr>
+      <tr><td>OB/GYN &amp; Pediatrics</td><td>Antenatal and postnatal visits, vaccination and growth schedules.</td></tr>
+      <tr><td>Surgery / Orthopaedics / Rehab</td><td>Post-op recovery, rehab sessions, follow-up appointments.</td></tr>
+      <tr><td>Corporate &amp; insurance members</td><td>Onboarding, benefit awareness, getting members to actually book.</td></tr>
+    </table>
+
+    <!-- 4. money -->
+    <h2>4 · What this does for Medics, in money</h2>
+    <p>This is the part that matters. <strong>VeloxaCare is a retention engine for a multi-specialty group,</strong>
+    and that is where it pays off most: one returning patient touches your consultations, your labs, your radiology,
+    your pharmacy and your specialists, again and again.</p>
+    <ul>
+      <li><strong>More returning patients across every specialty.</strong> Your follow-up and recall slots fill instead of sitting empty. Each return is a consultation, a test, a scan, a prescription you were losing.</li>
+      <li><strong>Better-controlled chronic patients.</strong> Catching the cost barrier early keeps the patient in care, and refilling, instead of dropping off, exactly where most clinics bleed patients.</li>
+      <li><strong>Corporate accounts that renew.</strong> Members who actually use Medics make HR renew without a fight. Engagement is the number that protects recurring corporate revenue.</li>
+      <li><strong>More referrals.</strong> A patient who feels Medics never let go of them tells their family, and brings them in.</li>
+      <li><strong>A group that stands out.</strong> Very few clinics in Ghana follow up at all. Doing it, under your name, makes Medics the practice people trust and stay with for years.</li>
+      <li><strong>Less waste.</strong> Fewer empty slots, fewer no-shows, less staff time spent chasing people by phone.</li>
+    </ul>
+
+    <div class="money">
+      <div class="h">Do the math with your own numbers (illustration)</div>
+      <p>Say Medics sees <strong>300</strong> follow-up and chronic patients a month, and <strong>about half
+      don't return on schedule.</strong> That's <strong>~150 patients</strong> drifting every month.</p>
+      <p>If VeloxaCare brings back just <strong>30 of them</strong>, and an average return (consultation +
+      labs/scan + prescription) across your specialties is worth <strong>GHS 300</strong>, that is:</p>
+      <div class="big">30 × GHS 300 = GHS 9,000 more per month → ~GHS 108,000 a year, before corporate renewals, referrals, and the chronic patients you keep for years.</div>
+      <p class="small">The pilot is free precisely so you can see it happen on your own patients before you pay anything.</p>
+    </div>
+
+    <!-- 5. objections -->
+    <h2>5 · Why this is hard to say no to</h2>
+    <table>
+      <tr><th>The reflex</th><th>Why it doesn't apply here</th></tr>
+      <tr><td>"We already have WhatsApp and a portal."</td><td>You do, and they wait for the patient to act. This makes WhatsApp work <em>proactively and intelligently</em> for you, reaching patients first, and understanding <em>why</em> one is slipping, which a portal never does.</td></tr>
+      <tr><td>"This isn't for our type of clinic."</td><td>It isn't tied to any one condition. With your range of specialties, <em>you</em> choose what it follows up on.</td></tr>
+      <tr><td>"We have no budget for this."</td><td>The pilot is <strong>completely free.</strong> You spend nothing to see if it brings patients back.</td></tr>
+      <tr><td>"Our staff are already stretched."</td><td>We build and run it. Enrolling a patient takes <strong>~30 seconds.</strong> Nothing to install, nothing to learn.</td></tr>
+      <tr><td>"Is it safe? Will it give medical advice?"</td><td>It <strong>never</strong> diagnoses. Danger signs go to your physicians by fixed clinical rules, who always decide. The AI only reminds, classifies, and summarizes.</td></tr>
+      <tr><td>"What about patient privacy?"</td><td>Data is protected and visible only to your care team, in line with Ghana's Data Protection Act (Act 843).</td></tr>
+      <tr><td>"What if it doesn't work for us?"</td><td>Then at Day 60 you stop. <strong>You owe nothing</strong>, and you'll have a clear before/after of how many patients came back.</td></tr>
+    </table>
+    <p><strong>The only thing you risk by trying is finding out how many patients, and how much repeat revenue, you've been quietly losing between visits.</strong></p>
+
+    <!-- 6. pilot -->
+    <h2>6 · The pilot, exactly what happens</h2>
+    <p><strong>Scope:</strong> one patient group you choose (e.g. your hypertension and diabetes patients, your
+    wellness members, or one corporate account) · 60 days · a Medics-branded WhatsApp assistant set up for the
+    cases you pick.</p>
+    <table>
+      <tr><th>Phase</th><th>When</th><th>What happens</th><th>Who</th></tr>
+      <tr><td>Scope</td><td>Day 0</td><td>A short conversation to pick the group and the cases the assistant should handle.</td><td>Together</td></tr>
+      <tr><td>Setup</td><td>Days 1–5</td><td>We configure VeloxaCare under the Medics name, for your chosen cases.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Enrolment</td><td>Days 5–60</td><td>Your team enrols patients in ~30 seconds each, after their visit.</td><td>You (light)</td></tr>
+      <tr><td>Run</td><td>Days 5–60</td><td>Reminders, Q&amp;A, guidance, reason detection, live alerts to your team.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Weekly report</td><td>Every week</td><td>A one-page summary lands before clinic.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Review</td><td>Day 60</td><td>We compare how many patients came back vs. your normal drop-off.</td><td>Together</td></tr>
+    </table>
+    <p><strong>What "success" looks like, agreed up front.</strong> So the Day-60 decision is about facts, not opinions:</p>
+    <ol>
+      <li><strong>How many patients returned</strong> for follow-up vs. your normal drop-off, <em>your retention.</em></li>
+      <li><strong>The revenue those returning visits represent</strong> across your specialties.</li>
+      <li><strong>Problems caught early</strong>, chronic patients who would have quietly quit, kept in care.</li>
+      <li><strong>Member engagement</strong> for any corporate cohort you include.</li>
+      <li><strong>Staff effort</strong>, confirming the workload stayed at roughly 30 seconds per patient.</li>
+    </ol>
+
+    <!-- 7. terms -->
+    <h2>7 · The terms, deliberately simple</h2>
+    <ul>
+      <li><strong>Cost during the pilot:</strong> GHS 0. No setup fee, no licence, no hardware.</li>
+      <li><strong>Commitment during the pilot:</strong> none. You may stop at any time.</li>
+      <li><strong>At Day 60:</strong> if patients came back, we sit down and agree the simplest way forward. If they didn't, we part as friends and you owe nothing.</li>
+      <li><strong>Your data is yours.</strong> At any point you can ask us to delete it.</li>
+      <li><strong>No exclusivity, no lock-in, no auto-renewal.</strong> Continuing is a fresh decision you make <em>after</em> seeing the results.</li>
+    </ul>
+
+    <!-- 8. needs -->
+    <h2>8 · What we need from you to start</h2>
+    <ol>
+      <li><strong>A short conversation</strong> to scope the pilot.</li>
+      <li><strong>A point of contact</strong> at Medics (usually a lead nurse or the administrator).</li>
+      <li><strong>One patient group</strong> we choose together, from whatever cases you want to keep coming back.</li>
+    </ol>
+    <p>No signature, no payment, no IT project. We can scope it this week and start the build immediately.</p>
+
+    <!-- 9. ask -->
+    <h2>9 · The ask</h2>
+    <div class="ask">
+      <div class="q">Can we get 20 minutes this week to scope a free 60-day pilot on one patient group of your choosing?</div>
+      <div class="sub">You won't decide on VeloxaCare from this document. You'll decide from your own appointment book in 60 days, at no cost and no risk. I am one call away.</div>
+    </div>
+
+    <!-- contact -->
+    <div class="contact">
+      <div>
+        <div class="nm">John Evans Okyere</div>
+        <div class="role">Ananse AI Labs</div>
+      </div>
+      <div class="det">
+        📞 0544954643<br>
+        ✉️ okyerevansjohn@gmail.com
+      </div>
+    </div>
+
+    <!-- acceptance -->
+    <h2>Acceptance <span style="font-weight:400;font-size:12px;color:var(--muted)">(optional, for your records)</span></h2>
+    <p style="font-size:12.5px">By signing below, Medics Group agrees to begin a free 60-day pilot with
+    Ananse AI Labs. There is no cost and no obligation to continue beyond Day 60.</p>
+    <div class="sign">
+      <div><div class="slabel">Authorised by (name &amp; role)</div><div class="sline"></div></div>
+      <div><div class="slabel">Date</div><div class="sline"></div></div>
+      <div><div class="slabel">Signature</div><div class="sline"></div></div>
+      <div><div class="slabel">Email / phone</div><div class="sline"></div></div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <span><b>Ananse AI Labs</b> — intelligent WhatsApp agents for Ghanaian businesses.</span>
+    <span>Free 60-day pilot · No cost · No obligation</span>
+  </div>
+
+</div>
+</body>
+</html>

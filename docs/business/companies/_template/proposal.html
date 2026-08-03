@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VeloxaCare, Pilot Proposal</title>
+<style>
+  :root{--green:#10b981;--green-d:#047857;--ink:#0f172a;--muted:#64748b;
+    --bg:#f1f5f9;--card:#fff;--red:#ef4444;--amber:#f59e0b;--line:#e2e8f0;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:#cbd5e1;color:var(--ink);padding:24px;display:flex;justify-content:center}
+  .doc{width:820px;background:#fff;border-radius:16px;overflow:hidden;
+    box-shadow:0 10px 40px rgba(0,0,0,.18)}
+
+  /* brand banner */
+  .banner{background:linear-gradient(135deg,#047857,#10b981);color:#fff;padding:26px 36px;
+    display:flex;align-items:center;justify-content:space-between}
+  .banner .left{display:flex;align-items:center;gap:14px}
+  .banner .mark{width:46px;height:46px;border-radius:13px;background:rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;font-size:23px}
+  .banner h1{font-size:25px;letter-spacing:-.01em}
+  .banner .sub{font-size:12.5px;opacity:.92;margin-top:2px}
+  .banner .tag{background:rgba(255,255,255,.16);padding:7px 16px;border-radius:999px;
+    font-size:12px;font-weight:700;text-align:center;line-height:1.4}
+
+  .wrap{padding:32px 36px 40px}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px;font-size:12.5px;
+    color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:24px}
+  .meta b{color:var(--ink)}
+
+  h2{font-size:16px;color:var(--green-d);margin:30px 0 12px;padding-bottom:6px;
+    border-bottom:2px solid #d1fae5;letter-spacing:-.01em}
+  h2:first-of-type{margin-top:0}
+  h3{font-size:13.5px;color:var(--ink);margin:16px 0 8px}
+  p{font-size:13px;line-height:1.6;color:#334155;margin:0 0 11px}
+  ul,ol{margin:0 0 12px 20px}
+  li{font-size:13px;line-height:1.6;color:#334155;margin-bottom:5px}
+  strong{color:var(--ink)}
+
+  .lead{background:#ecfdf5;border:1px solid #a7f3d0;border-left:4px solid var(--green);
+    border-radius:12px;padding:16px 18px;margin:0 0 6px}
+  .lead p{margin:0;font-size:13px;color:#065f46}
+
+  .punch{font-size:15px;font-weight:800;color:var(--ink);margin:4px 0 12px;line-height:1.45}
+
+  .money{background:#0f172a;color:#e2e8f0;border-radius:14px;padding:20px 24px;margin:8px 0 12px}
+  .money .h{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;font-weight:700;margin-bottom:10px}
+  .money p{color:#cbd5e1;font-size:13px;margin:0 0 9px}
+  .money .big{font-size:21px;font-weight:800;color:#34d399;margin:6px 0}
+  .money .small{font-size:11.5px;color:#94a3b8;font-style:italic;margin:0}
+
+  table{width:100%;border-collapse:collapse;margin:6px 0 14px;font-size:12.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+  th{background:#f0fdf4;color:var(--green-d);font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;font-weight:700}
+  td:first-child{font-weight:600;color:var(--ink);width:38%}
+  .glance td:first-child{width:42%}
+  tr:last-child td{border-bottom:none}
+
+  .pill{display:inline-block;background:#d1fae5;color:#047857;font-weight:700;
+    font-size:11px;padding:2px 9px;border-radius:999px}
+  .pill.red{background:#fee2e2;color:#b91c1c}
+
+  .ask{background:#0f172a;color:#fff;border-radius:14px;padding:22px 26px;margin:8px 0 6px}
+  .ask .q{font-size:16px;font-weight:800;line-height:1.5;color:#fff}
+  .ask .sub{font-size:12.5px;color:#94a3b8;margin-top:10px}
+
+  .sign{display:grid;grid-template-columns:1fr 1fr;gap:14px 28px;margin-top:14px;font-size:12.5px}
+  .sline{border-bottom:1px solid #94a3b8;height:26px;margin-top:4px}
+  .slabel{color:var(--muted);font-size:11px}
+
+  .contact{display:flex;align-items:center;gap:14px;background:#f8fafc;border:1px solid var(--line);
+    border-radius:12px;padding:16px 18px;margin-top:24px}
+  .contact .nm{font-weight:800;font-size:14px}
+  .contact .role{color:var(--green-d);font-size:12px;font-weight:600}
+  .contact .det{margin-left:auto;text-align:right;font-size:12px;color:var(--muted);line-height:1.7}
+
+  .foot{background:#0f172a;color:#cbd5e1;padding:13px 36px;display:flex;
+    justify-content:space-between;font-size:11px}
+  .foot b{color:#fff}
+
+  .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:4px}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .doc{box-shadow:none;border-radius:0;width:100%}
+    h2{break-after:avoid}
+    table,.ask,.lead,.contact,.sign,.money{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- brand banner -->
+  <div class="banner">
+    <div class="left">
+      <div class="mark">♥</div>
+      <div>
+        <h1>VeloxaCare</h1>
+        <div class="sub">Keep your patients coming back, your clinic, in their pocket, on WhatsApp.</div>
+      </div>
+    </div>
+    <div class="tag">Pilot Proposal<br>Free · 60 Days</div>
+  </div>
+
+  <div class="wrap">
+
+    <!-- meta block -->
+    <div class="meta">
+      <div><b>Prepared for:</b> _____________________________ (the "Clinic")</div>
+      <div><b>Prepared by:</b> John Evans Okyere, VeloxaCare</div>
+      <div><b>Attention:</b> The Medical Director / Administrator / Owner</div>
+      <div><b>Date:</b> ____________________</div>
+      <div><b>Valid until:</b> ____________ (30 days from above)</div>
+      <div><b>Pilot scope:</b> 30 patients of your choosing · 60 days</div>
+    </div>
+
+    <!-- at a glance -->
+    <h2>At a glance</h2>
+    <table class="glance">
+      <tr><td>What this is</td><td>A way to keep your patients coming back, an AI assistant on WhatsApp that stays with each patient after they leave, <strong>under your clinic's name</strong>.</td></tr>
+      <tr><td>What it does for you</td><td>More returning patients, more repeat revenue, more referrals, without adding work for your staff.</td></tr>
+      <tr><td>The pilot</td><td><strong>Free 60-day trial</strong> with 30 patients of your choosing.</td></tr>
+      <tr><td>Cost to the Clinic</td><td><span class="pill">GHS 0</span> &nbsp;No setup fee, no software to buy, no hardware.</td></tr>
+      <tr><td>Work for your staff</td><td>~30 seconds to enrol a patient. We run everything else.</td></tr>
+      <tr><td>Your risk</td><td><span class="pill red">None</span> &nbsp;If it doesn't bring patients back by Day 60, you owe nothing and simply stop.</td></tr>
+      <tr><td>What we ask today</td><td>Permission to begin with 30 patients, nothing to sign, nothing to pay.</td></tr>
+    </table>
+
+    <div class="lead">
+      <p>You can say <strong>yes</strong> to this without spending a cedi or adding a task to your
+      staff's day. You only decide to continue <strong>after</strong> you have seen the patients come back.</p>
+    </div>
+
+    <!-- 1. the cost -->
+    <h2>1 · The real cost to your clinic</h2>
+    <p>You did the hard work. The consultation. The diagnosis. The prescription. You earned that
+    patient's trust.</p>
+    <p class="punch">Then they walk out the door, and you never hear from them again.</p>
+    <p>That is not just a health problem. That is <strong>your revenue walking out the door:</strong></p>
+    <ul>
+      <li>A patient who doesn't come back is a follow-up visit you don't bill, drugs you don't dispense, tests you don't run, <strong>income you already earned the right to, gone.</strong></li>
+      <li>When that patient next needs care, they may go to <strong>another clinic, a pharmacy, or a chemist down the road.</strong> You did the work; someone else keeps the patient.</li>
+      <li>The patients who quietly stop, forgot, couldn't afford it, got confused about the instructions, <strong>say nothing.</strong> You only find out when it's too late, or never.</li>
+      <li>And the patients you <em>do</em> keep rarely tell their family about you, because the moment they left, they stopped hearing from you.</li>
+    </ul>
+    <p>In most clinics, <strong>half or more</strong> of patients who should return for follow-up never do.
+    Picture your own appointment book: half of it could be full, and isn't. <strong>That is the leak.</strong>
+    Every empty follow-up slot is money you already worked for, sitting unclaimed.</p>
+
+    <!-- 2. what it really is -->
+    <h2>2 · What VeloxaCare really is, your clinic, in your patient's pocket</h2>
+    <p>VeloxaCare is not a reminder app. It is <strong>your clinic's own assistant that goes home with
+    every patient</strong>, on WhatsApp, under <em>your</em> name, so they never feel you let go of them.
+    After every visit, your patient keeps hearing from <strong>your clinic</strong>:</p>
+    <ol>
+      <li><strong>It reminds them</strong> to take their medication, complete their treatment, and come back for their next appointment, so your follow-up slots actually fill.</li>
+      <li><strong>It answers their questions, any time.</strong> The things they were too rushed or too shy to ask in the consulting room, <em>"Can I take this with food?" "Is this side effect normal?" "When should I come back?"</em>, answered instantly, in simple language, on your behalf.</li>
+      <li><strong>It gives guidance for their specific condition</strong>, diet, lifestyle, the do's and don'ts for what <em>they</em> are being treated for, the advice your doctor would give if there were time for every patient. All within safe limits you approve.</li>
+      <li><strong>It notices when a patient is slipping, and why</strong> (forgot, cost, side effect, ran out, confused), and quietly alerts your team so you can act before you lose them.</li>
+      <li><strong>It hands your team a one-page summary</strong> of every patient before each visit, who is on track, who is at risk, and why, with <strong>no extra work for your staff.</strong></li>
+    </ol>
+    <p><strong>The effect:</strong> your patient never feels abandoned. Your clinic stays in their pocket,
+    in their messages, in their mind. When they or their family next need care, <strong>you are who they
+    think of</strong>, not the clinic down the street.</p>
+    <p class="note">A safety boundary we will not cross: VeloxaCare <strong>never diagnoses</strong> and never
+    replaces your judgement. The guidance it gives is general health education within limits <em>you</em> set,
+    and any danger sign is flagged to your staff by fixed rules, a human always decides. Patient data is
+    visible only to your care team, in line with Ghana's Data Protection Act.</p>
+
+    <h3>It fits whatever your clinic treats</h3>
+    <table>
+      <tr><th>Your clinic</th><th>What VeloxaCare keeps them coming back for</th></tr>
+      <tr><td>General / family / chronic care</td><td>Long-term medication, check-ups, repeat consultations.</td></tr>
+      <tr><td>Eye clinic</td><td>Eye-drop adherence, post-surgery recovery, screening recalls.</td></tr>
+      <tr><td>Bone / orthopaedic / physiotherapy</td><td>Post-op recovery, rehab sessions, follow-up appointments.</td></tr>
+      <tr><td>Dental</td><td>Post-procedure care, 6-month recall visits.</td></tr>
+      <tr><td>Maternity / antenatal</td><td>Antenatal visits, postnatal and newborn follow-up.</td></tr>
+      <tr><td>Children's / paediatric</td><td>Vaccination schedules, follow-up after illness.</td></tr>
+      <tr><td>Any clinic</td><td>Bringing patients back, and keeping them yours.</td></tr>
+    </table>
+
+    <!-- 3. money -->
+    <h2>3 · What this does for your clinic, in money</h2>
+    <p>This is the part that matters: <strong>VeloxaCare is a retention engine.</strong> It turns one-time
+    visits into ongoing patients, and ongoing patients into revenue and referrals.</p>
+    <ul>
+      <li><strong>More returning patients</strong>, your follow-up slots fill instead of sitting empty.</li>
+      <li><strong>More repeat revenue</strong>, every returning patient is another consultation, prescription, test. Patients who stay in care are worth several visits a year, not one.</li>
+      <li><strong>More referrals</strong>, a patient who feels cared for after they leave tells their family and friends. Your best marketing is a patient who never felt abandoned.</li>
+      <li><strong>A clinic that stands out</strong>, very few clinics in Ghana follow up with patients at all. Doing it makes you the clinic people trust and come back to.</li>
+      <li><strong>Less waste</strong>, fewer empty slots, fewer no-shows, less nurse time spent chasing people by phone.</li>
+    </ul>
+
+    <div class="money">
+      <div class="h">Do the math with your own numbers (illustration)</div>
+      <p>Say your clinic sees <strong style="color:#fff">150</strong> follow-up patients a month, and about
+      <strong style="color:#fff">half don't return</strong>, that's ~75 patients drifting away every month.</p>
+      <p>If VeloxaCare brings back just <strong style="color:#fff">20 of them</strong>, and an average return
+      visit (consultation + drugs + tests) is worth <strong style="color:#fff">GHS 200</strong>:</p>
+      <div class="big">20 × GHS 200 = GHS 4,000 / month → ~GHS 48,000 a year</div>
+      <p class="small">And that's before referrals, repeat visits, and the patients you keep for years instead
+      of losing after one. Plug in your real patient count and visit value, the number gets big fast.</p>
+    </div>
+    <p><strong>The pilot is free precisely so you can watch this happen with your own patients before you
+    pay anything.</strong></p>
+
+    <!-- 4. objections -->
+    <h2>4 · Why this is hard to say no to</h2>
+    <table>
+      <tr><th>Common reason to hesitate</th><th>Why it doesn't apply here</th></tr>
+      <tr><td>"This isn't for our type of clinic."</td><td>It isn't tied to any one condition. If your patients should come back, it fits, you choose what it follows up on.</td></tr>
+      <tr><td>"We have no budget for this."</td><td>The pilot is <strong>completely free.</strong> You spend nothing to see if it brings patients back.</td></tr>
+      <tr><td>"Our staff are already stretched."</td><td>We do the work. Enrolling a patient takes <strong>~30 seconds.</strong> Nothing to learn, nothing to install.</td></tr>
+      <tr><td>"Our patients are older / not tech-savvy."</td><td>If they (or a family member) can receive a WhatsApp message, they can use it. A relative's phone works fine.</td></tr>
+      <tr><td>"Is it safe? Will it give medical advice?"</td><td>It <strong>never</strong> diagnoses. Guidance stays within limits you set; danger signs go to your staff, who always decide.</td></tr>
+      <tr><td>"What about patient privacy?"</td><td>Data is protected and visible only to your care team, in line with Ghana's Data Protection Act.</td></tr>
+      <tr><td>"What if it doesn't work for us?"</td><td>Then at Day 60 you stop. <strong>You owe nothing</strong>, and you'll have a clear before/after of how many patients came back.</td></tr>
+    </table>
+    <p><strong>The only thing you risk by trying is finding out how much money you've been leaving on the table.</strong></p>
+
+    <!-- 5. pilot -->
+    <h2>5 · The pilot, exactly what happens</h2>
+    <p><strong>Scope:</strong> patients you choose (any condition you follow up on) · 30 patients · 60 days.</p>
+    <table>
+      <tr><th>Phase</th><th>When</th><th>What happens</th><th>Who</th></tr>
+      <tr><td>Setup</td><td>Day 0</td><td>We configure VeloxaCare under your clinic's name, for the cases you choose.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Enrolment</td><td>Days 1–7</td><td>Staff enrol patients in ~30 sec each, after consultation.</td><td>You (light)</td></tr>
+      <tr><td>Run</td><td>Days 1–60</td><td>Reminders, Q&amp;A, guidance, check-ins, reason detection, live alerts.</td><td><strong>Us (auto)</strong></td></tr>
+      <tr><td>Weekly report</td><td>Weekly</td><td>A one-page summary lands before clinic.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Review</td><td>Day 60</td><td>We compare how many patients came back vs. your normal drop-off.</td><td>Together</td></tr>
+    </table>
+    <p><strong>What "success" looks like, agreed up front.</strong> So the Day-60 decision is about facts, not opinions, we measure the ones that fit you:</p>
+    <ol>
+      <li><strong>How many patients returned</strong> for follow-up vs. your normal drop-off, <em>your retention.</em></li>
+      <li><strong>The revenue those returning visits represent.</strong></li>
+      <li><strong>Problems caught early</strong>, patients who would have quietly quit, kept in care instead.</li>
+      <li><strong>Staff effort</strong>, confirming the workload stayed at ~30 seconds per patient.</li>
+    </ol>
+
+    <!-- 6. terms -->
+    <h2>6 · The terms, deliberately simple</h2>
+    <ul>
+      <li><strong>Cost during the pilot:</strong> GHS 0. No setup fee, no licence, no hardware.</li>
+      <li><strong>Commitment during the pilot:</strong> none. You may stop at any time.</li>
+      <li><strong>At Day 60:</strong> if patients came back, we sit down and agree the simplest way forward. If they didn't, we part as friends and you owe nothing.</li>
+      <li><strong>Your data is yours.</strong> At any point you can ask us to delete it.</li>
+      <li><strong>No exclusivity, no lock-in, no auto-renewal.</strong> Continuing is a fresh decision you make <em>after</em> seeing the patients return.</li>
+    </ul>
+
+    <!-- 7. needs -->
+    <h2>7 · What we need from you to start</h2>
+    <ol>
+      <li><strong>A yes</strong> to running the pilot.</li>
+      <li><strong>A point of contact</strong> at the clinic (usually a lead nurse or administrator).</li>
+      <li><strong>30 patients</strong> we select together, from whatever cases you want to keep coming back.</li>
+    </ol>
+    <p>No signature, no payment, no IT project. We can pick the 30 patients and <strong>start within the week.</strong></p>
+
+    <!-- 8. ask -->
+    <h2>8 · The ask</h2>
+    <div class="ask">
+      <div class="q">Can we agree to begin the free 60-day pilot, choose 30 patients together, and start Monday?</div>
+      <div class="sub">You won't decide on VeloxaCare from this document, you'll decide from your own appointment book in 60 days, at no cost and no risk.</div>
+    </div>
+
+    <!-- contact -->
+    <div class="contact">
+      <div>
+        <div class="nm">John Evans Okyere</div>
+        <div class="role">VeloxaCare</div>
+      </div>
+      <div class="det">
+        ✉️ okyerevansjohn@gmail.com<br>
+        📞 ____________________
+      </div>
+    </div>
+
+    <!-- acceptance -->
+    <h2>Acceptance <span style="font-weight:400;font-size:12px;color:var(--muted)">(optional, for your records)</span></h2>
+    <p style="font-size:12.5px">By signing below, the Clinic agrees to begin a free 60-day pilot of VeloxaCare.
+    There is no cost and no obligation to continue beyond Day 60.</p>
+    <div class="sign">
+      <div><div class="slabel">Clinic name</div><div class="sline"></div></div>
+      <div><div class="slabel">Authorised by (name &amp; role)</div><div class="sline"></div></div>
+      <div><div class="slabel">Signature</div><div class="sline"></div></div>
+      <div><div class="slabel">Date</div><div class="sline"></div></div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <span><b>VeloxaCare</b>, Keep your patients coming back.</span>
+    <span>Free 60-day pilot · No cost · No obligation</span>
+  </div>
+
+</div>
+</body>
+</html>

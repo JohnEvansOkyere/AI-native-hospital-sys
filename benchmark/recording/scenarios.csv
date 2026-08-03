@@ -1,0 +1,22 @@
+scenario_id,language_pair,intent_ref,bp_ref,script
+E01,en,adherence_yes,,"Yes, I took my medicine this morning after breakfast."
+E02,en,cost,,I haven't bought the medicine yet. It's too expensive for me this month.
+E03,en,bp_report,142/95,I checked my blood pressure today. It was one forty-two over ninety-five.
+E04,en,book_appointment,,Please book me an appointment with the doctor for Tuesday morning.
+E05,en,refill_request,,My amlodipine is almost finished. I need a refill before Friday.
+T01,tw-en,adherence_yes,,"Aane, manom aduro no ɛnnɛ anɔpa."
+T02,tw-en,cost,,Sika nni hɔ — I can't afford the lisinopril this month.
+T03,tw-en,forgot,,Me werɛ afi — I forgot to take it yesterday evening.
+T04,tw-en,side_effect,,"Sɛ menom aduro no a, me ti pae me. The medicine gives me serious headache."
+T05,tw-en,ran_out,,Aduro no asa — the amlodipine finished since Friday.
+T06,tw-en,bp_report,116/78,Me BP yɛ one-sixteen over seventy-eight.
+T07,tw-en,bp_report,160/100,Mesusuu me BP ɛnnɛ — it was one-sixty over one hundred.
+T08,tw-en,book_appointment,,Mepɛ sɛ mebook appointment wɔ Dr. Mensah nkyɛn ɔkyena anɔpa.
+T09,tw-en,bp_report,175/110,Me BP yɛ one seventy-five over one-ten. Ɛbɔ me hu.
+P01,pcm-en,cost,,"I no fit buy the medicine, e cost too much for me this month."
+P02,pcm-en,bp_report,138/89,I check my BP for house. E be one thirty-eight over eighty-nine.
+P03,pcm-en,reschedule,,"Abeg, make you move my appointment go next week Tuesday, I travel go Kumasi."
+P04,pcm-en,ran_out,,"The nifedipine don finish since weekend, I never get chance go pharmacy."
+P05,pcm-en,adherence_yes,90/60,"I take my medicine today, and my pressure be ninety over sixty."
+S01,tw-en,cost,,
+S02,tw-en,reschedule,,

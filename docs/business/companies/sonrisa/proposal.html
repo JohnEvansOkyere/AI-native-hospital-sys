@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sonrisa Dental, Proposal by Ananse AI Labs</title>
+<style>
+  :root{--indigo:#0e7490;--violet:#0891b2;--ink:#0b1020;--muted:#64748b;
+    --bg:#f1fbfd;--line:#dceef2;--cyan:#06b6d4;--emer:#10b981;--red:#ef4444;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:#bcd6dc;color:var(--ink);padding:24px;display:flex;justify-content:center}
+  .doc{width:820px;background:#fff;border-radius:16px;overflow:hidden;
+    box-shadow:0 10px 40px rgba(15,16,32,.22)}
+
+  /* brand banner */
+  .banner{background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;padding:26px 36px;
+    display:flex;align-items:center;justify-content:space-between}
+  .banner .left{display:flex;align-items:center;gap:14px}
+  .banner .mark{width:46px;height:46px;border-radius:13px;background:rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;font-size:22px}
+  .banner h1{font-size:23px;letter-spacing:-.01em}
+  .banner .sub{font-size:12.5px;opacity:.92;margin-top:2px}
+  .banner .tag{background:rgba(255,255,255,.18);padding:7px 16px;border-radius:999px;
+    font-size:12px;font-weight:700;text-align:center;line-height:1.4}
+
+  .wrap{padding:32px 36px 40px}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px;font-size:12.5px;
+    color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:24px}
+  .meta b{color:var(--ink)}
+
+  h2{font-size:16px;color:var(--indigo);margin:30px 0 12px;padding-bottom:6px;
+    border-bottom:2px solid #cdeaf0;letter-spacing:-.01em}
+  h2:first-of-type{margin-top:0}
+  h3{font-size:13.5px;color:var(--ink);margin:16px 0 8px}
+  p{font-size:13px;line-height:1.6;color:#33384d;margin:0 0 11px}
+  ul,ol{margin:0 0 12px 20px}
+  li{font-size:13px;line-height:1.6;color:#33384d;margin-bottom:5px}
+  strong{color:var(--ink)}
+  em{color:var(--violet);font-style:italic}
+
+  .lead{background:#e6f7fb;border:1px solid #c3e8f0;border-left:4px solid var(--indigo);
+    border-radius:12px;padding:16px 18px;margin:0 0 6px}
+  .lead p{margin:0;font-size:13px;color:#0c4a57}
+
+  .punch{font-size:15px;font-weight:800;color:var(--ink);margin:4px 0 12px;line-height:1.45}
+
+  .money{background:#0b1020;color:#dfe1f0;border-radius:14px;padding:20px 24px;margin:8px 0 12px}
+  .money .h{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#7fd6e6;font-weight:700;margin-bottom:10px}
+  .money p{color:#cdd0e8;font-size:13px;margin:0 0 9px}
+  .money .big{font-size:20px;font-weight:800;color:#38bdf8;margin:6px 0;line-height:1.35}
+  .money .small{font-size:11.5px;color:#9aa0c0;font-style:italic;margin:0}
+  .money strong{color:#fff}
+
+  table{width:100%;border-collapse:collapse;margin:6px 0 14px;font-size:12.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+  th{background:#e6f5f8;color:var(--indigo);font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;font-weight:700}
+  td:first-child{font-weight:600;color:var(--ink);width:38%}
+  .glance td:first-child{width:42%}
+  tr:last-child td{border-bottom:none}
+
+  .pill{display:inline-block;background:#cdeaf0;color:var(--indigo);font-weight:700;
+    font-size:11px;padding:2px 9px;border-radius:999px}
+  .pill.red{background:#fee2e2;color:#b91c1c}
+
+  .ask{background:linear-gradient(135deg,#0e7490,#0891b2);color:#fff;border-radius:14px;padding:22px 26px;margin:8px 0 6px}
+  .ask .q{font-size:16px;font-weight:800;line-height:1.5;color:#fff}
+  .ask .sub{font-size:12.5px;color:#dff3f8;margin-top:10px}
+
+  .sign{display:grid;grid-template-columns:1fr 1fr;gap:14px 28px;margin-top:14px;font-size:12.5px}
+  .sline{border-bottom:1px solid #9aa0c0;height:26px;margin-top:4px}
+  .slabel{color:var(--muted);font-size:11px}
+
+  .contact{display:flex;align-items:center;gap:14px;background:#f2fafc;border:1px solid var(--line);
+    border-radius:12px;padding:16px 18px;margin-top:24px}
+  .contact .nm{font-weight:800;font-size:14px}
+  .contact .role{color:var(--indigo);font-size:12px;font-weight:600}
+  .contact .det{margin-left:auto;text-align:right;font-size:12px;color:var(--muted);line-height:1.7}
+
+  .foot{background:#0b1020;color:#cdd0e8;padding:13px 36px;display:flex;
+    justify-content:space-between;font-size:11px}
+  .foot b{color:#fff}
+
+  .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:4px}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .doc{box-shadow:none;border-radius:0;width:100%}
+    h2{break-after:avoid}
+    table,.ask,.lead,.contact,.sign,.money{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- brand banner -->
+  <div class="banner">
+    <div class="left">
+      <div class="mark">🦷</div>
+      <div>
+        <h1>Ananse AI Labs</h1>
+        <div class="sub">A WhatsApp care assistant for Sonrisa Dental patients.</div>
+      </div>
+    </div>
+    <div class="tag">Pilot Proposal<br>Free · 60 Days</div>
+  </div>
+
+  <div class="wrap">
+
+    <!-- meta block -->
+    <div class="meta">
+      <div><b>Prepared for:</b> Sonrisa Dental</div>
+      <div><b>Prepared by:</b> John Evans Okyere, Ananse AI Labs</div>
+      <div><b>Attention:</b> The Practice Owner / Clinical Lead</div>
+      <div><b>Date:</b> ____________________</div>
+      <div><b>Valid until:</b> ____________ (30 days from above)</div>
+      <div><b>Pilot scope:</b> your chosen patients · 60 days · free</div>
+    </div>
+
+    <!-- at a glance -->
+    <h2>At a glance</h2>
+    <table class="glance">
+      <tr><td>What this is</td><td>A WhatsApp assistant that stays with each patient after they leave the chair, <strong>under the Sonrisa name</strong>, following up on their aftercare and bringing them back for their recall.</td></tr>
+      <tr><td>What it does for you</td><td>More recall visits filled, fewer patients lost in the gap between procedures, and proof that your aftercare advice was actually followed.</td></tr>
+      <tr><td>The pilot</td><td>A <strong>free 60-day build and run</strong>, with patients you choose.</td></tr>
+      <tr><td>Cost to Sonrisa</td><td><span class="pill">GHS 0</span> &nbsp;No setup fee, no software to buy, no hardware.</td></tr>
+      <tr><td>Work for your team</td><td>~30 seconds to enrol a patient after a procedure. We build it and run everything else.</td></tr>
+      <tr><td>Your risk</td><td><span class="pill red">None</span> &nbsp;If it doesn't bring patients back by Day 60, you owe nothing and we walk away.</td></tr>
+      <tr><td>What we ask today</td><td>A yes to begin with a small group of patients. Nothing to sign, nothing to pay.</td></tr>
+    </table>
+
+    <div class="lead">
+      <p>You can say <strong>yes</strong> to this without spending a cedi or adding a task to your
+      team's day. You only decide to continue <strong>after</strong> you have seen the patients come back.</p>
+    </div>
+
+    <!-- 1. what we saw -->
+    <h2>1 · What we saw together</h2>
+    <p>When we met, one thing was clear: Sonrisa already cares about what happens to a patient
+    <em>after</em> they leave. You give real aftercare advice. You want them gargling morning and
+    evening after an extraction. You want them back in six months so you can check that the work
+    held and the advice was followed.</p>
+    <p>But here is the honest gap, in your own words:</p>
+    <ul>
+      <li>You send reminders to gargle, <strong>but you have no way of knowing if the patient actually did it.</strong> A reminder goes out into silence. Did they obey? You only find out at the next visit, if there is a problem, or never.</li>
+      <li>Dental care is not like pressure or diabetes, where a patient takes a drug every single day for life. Your follow-ups are <strong>spread out, sometimes months, sometimes years apart.</strong> And in that long silence between visits, patients drift. They forget. They assume they're fine. They don't rebook.</li>
+      <li>The patients who heal badly, or who ignored the aftercare, are exactly the ones you <em>don't</em> hear from, until they walk in with a complication, or worse, post about it online.</li>
+    </ul>
+    <p class="punch">That long, silent gap is where Sonrisa loses patients, and loses the recall revenue that should have been yours.</p>
+
+    <!-- 2. what it is -->
+    <h2>2 · What VeloxaCare really is, Sonrisa in your patient's pocket</h2>
+    <p>VeloxaCare is not just a reminder app. A reminder that nobody checks is only a notification.
+    <strong>VeloxaCare reminds, then asks, then knows whether the patient actually did it, and tells
+    you who didn't.</strong></p>
+    <p>It is your clinic's own assistant that goes home with every patient, on WhatsApp, under
+    <em>your</em> name, so they never feel Sonrisa let go of them. After a procedure, your patient
+    keeps hearing from <strong>Sonrisa</strong>:</p>
+    <ol>
+      <li><strong>It guides the aftercare, day by day.</strong> After an extraction, it walks them through the gargling, morning and evening, the do's and don'ts, what is normal and what is not, in simple language, on your behalf.</li>
+      <li><strong>It confirms they actually did it.</strong> Instead of guessing, it checks in: <em>did you gargle today?</em> When a patient says no, or goes quiet, <strong>your team sees it.</strong> You finally know who is following advice and who isn't, while you can still do something about it.</li>
+      <li><strong>It catches a recovery going wrong, early.</strong> If a patient's answers suggest pain, swelling, or trouble, it flags them to your team so you can call them before it becomes a complication, or a bad review.</li>
+      <li><strong>It carries the patient across the long gap and brings them back.</strong> Six months, a year, whatever the recall, it keeps gentle, branded contact alive in that silence and brings them back for their check-up, so your recall slots actually fill.</li>
+      <li><strong>It answers their questions, any time.</strong> Hours, location, <em>"is this normal after my extraction?", "when do I come back?", "do you do whitening?"</em>, answered instantly, day or night, as Sonrisa.</li>
+      <li><strong>It hands your team a simple summary</strong>, who followed their aftercare, who is due back, who is at risk, with no extra work for your staff.</li>
+    </ol>
+    <p class="note">The safety boundary we will not cross: VeloxaCare <strong>never diagnoses</strong> and
+    never replaces your judgement. The guidance it gives is the general aftercare <em>you</em> approve, and
+    any danger sign is flagged to your team by fixed rules, a human always decides. Patient data stays
+    visible only to your team, in line with Ghana's Data Protection Act, 2012 (Act 843).</p>
+
+    <!-- 3. what this does -->
+    <h2>3 · What this does for Sonrisa, in money</h2>
+    <p>This is the part that matters. <strong>VeloxaCare is a recall engine.</strong> In dentistry your
+    revenue lives on patients coming back, and on patients staying with you for years.</p>
+    <ul>
+      <li><strong>More recall visits filled.</strong> The patients who would have quietly drifted in the gap come back for their six-month check-up instead. Every filled recall is a visit you bill that you were losing.</li>
+      <li><strong>Fewer complications, and fewer bad recovery stories.</strong> Knowing who skipped their aftercare lets you reach them before a problem grows, protecting the near-perfect reputation you have worked to build.</li>
+      <li><strong>Patients kept for years, and their families with them.</strong> A patient who feels Sonrisa stayed with them after the chair comes back, brings their children, and tells their friends. Your best marketing is a patient who never felt abandoned.</li>
+      <li><strong>A clinic that stands out.</strong> Very few clinics in Ghana follow up at all, let alone confirm that aftercare was followed. Doing it makes Sonrisa the dentist people trust and return to.</li>
+      <li><strong>Less wasted time.</strong> Fewer empty recall slots, fewer no-shows, less front-desk time spent chasing people by phone.</li>
+    </ul>
+
+    <div class="money">
+      <div class="h">Do the math with your own numbers (illustration)</div>
+      <p>Say Sonrisa should see <strong>100</strong> patients return for their recall over a period, and
+      <strong>about half don't come back on their own.</strong> That's <strong>~50 patients</strong> drifting away.</p>
+      <p>If VeloxaCare brings back just <strong>15 of them</strong>, and an average dental recall visit (exam,
+      cleaning, plus the work it uncovers) is worth <strong>GHS 300</strong>, that is:</p>
+      <div class="big">15 × GHS 300 = GHS 4,500 in recall revenue you were losing, before the years of future recalls and the families they bring.</div>
+      <p class="small">The pilot is free precisely so you can watch this happen with your own patients before you pay anything.</p>
+    </div>
+
+    <!-- 4. objections -->
+    <h2>4 · Why this is hard to say no to</h2>
+    <table>
+      <tr><th>The reflex</th><th>Why it doesn't apply here</th></tr>
+      <tr><td>"We already send reminders."</td><td>You do, and you can't tell if anyone obeys them. This is the difference between a reminder nobody checks and one that <strong>confirms the patient actually did it</strong> and tells you who didn't.</td></tr>
+      <tr><td>"Our care isn't daily like a pressure clinic."</td><td>Exactly, and that long gap between visits is the problem. VeloxaCare is built to carry patients across months of silence and bring them back, that is its whole point.</td></tr>
+      <tr><td>"We have no budget for this."</td><td>The pilot is <strong>completely free.</strong> You spend nothing to see if it brings patients back.</td></tr>
+      <tr><td>"Our team is already busy."</td><td>We build it and run it. Enrolling a patient takes <strong>~30 seconds</strong> after their procedure. Nothing to install, nothing to learn.</td></tr>
+      <tr><td>"Is it safe? Will it give dental advice?"</td><td>It <strong>never</strong> diagnoses. It gives only the aftercare <em>you</em> approve, and danger signs go to your team, who always decide.</td></tr>
+      <tr><td>"What about patient privacy?"</td><td>Data is protected and visible only to your team, in line with Ghana's Data Protection Act (Act 843).</td></tr>
+      <tr><td>"What if it doesn't work for us?"</td><td>Then at Day 60 you stop. <strong>You owe nothing</strong>, and you'll have a clear before/after of how many patients came back.</td></tr>
+    </table>
+    <p><strong>The only thing you risk by trying is finding out how many recalls, and how much trust, you've been quietly losing in the silence between visits.</strong></p>
+
+    <!-- 5. pilot -->
+    <h2>5 · The pilot, exactly what happens</h2>
+    <p><strong>Scope:</strong> patients you choose (e.g. everyone who has an extraction or a procedure over
+    the pilot, plus those due for a recall) · 60 days · a Sonrisa-branded WhatsApp assistant set up for your
+    aftercare and your recalls.</p>
+    <table>
+      <tr><th>Phase</th><th>When</th><th>What happens</th><th>Who</th></tr>
+      <tr><td>Setup</td><td>Days 0–3</td><td>We build VeloxaCare under the Sonrisa name, with your aftercare steps and recall timing.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Enrolment</td><td>Days 1–60</td><td>Your team enrols a patient in ~30 seconds after their procedure.</td><td>You (light)</td></tr>
+      <tr><td>Run</td><td>Days 1–60</td><td>Aftercare guidance, compliance check-ins, recall nudges, early-warning flags, live to your team.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Weekly summary</td><td>Every week</td><td>A short summary of who followed aftercare and who is at risk.</td><td><strong>Us</strong></td></tr>
+      <tr><td>Review</td><td>Day 60</td><td>We compare how many patients came back, and how aftercare went, vs. your normal pattern.</td><td>Together</td></tr>
+    </table>
+    <p><strong>What "success" looks like, agreed up front.</strong> So the Day-60 decision is about facts, not opinions:</p>
+    <ol>
+      <li><strong>How many patients returned</strong> for their recall vs. your normal drop-off.</li>
+      <li><strong>How many actually followed their aftercare</strong>, something you can't measure today.</li>
+      <li><strong>Problems caught early</strong>, recoveries flagged before they became complications.</li>
+      <li><strong>Staff effort</strong>, confirming the workload stayed at roughly 30 seconds per patient.</li>
+    </ol>
+
+    <!-- 6. terms -->
+    <h2>6 · The terms, deliberately simple</h2>
+    <ul>
+      <li><strong>Cost during the pilot:</strong> GHS 0. No setup fee, no licence, no hardware.</li>
+      <li><strong>Commitment during the pilot:</strong> none. You may stop at any time.</li>
+      <li><strong>At Day 60:</strong> if patients came back, we sit down and agree the simplest way forward. If they didn't, we part as friends and you owe nothing.</li>
+      <li><strong>Your data is yours.</strong> At any point you can ask us to delete it.</li>
+      <li><strong>No exclusivity, no lock-in, no auto-renewal.</strong> Continuing is a fresh decision you make <em>after</em> seeing the patients return.</li>
+    </ul>
+
+    <!-- 7. needs -->
+    <h2>7 · What we need from you to start</h2>
+    <ol>
+      <li><strong>A yes</strong> to running the pilot.</li>
+      <li><strong>A point of contact</strong> at Sonrisa (usually the front desk lead or a dental assistant).</li>
+      <li><strong>The patients</strong> we start with, your aftercare and recall cases.</li>
+    </ol>
+    <p>No signature, no payment, no IT project. We can set it up and start within the week.</p>
+
+    <!-- 8. ask -->
+    <h2>8 · The ask</h2>
+    <div class="ask">
+      <div class="q">Can we agree to begin the free 60-day pilot, choose the first group of patients together, and start this week?</div>
+      <div class="sub">You won't decide on VeloxaCare from this document. You'll decide from your own appointment book in 60 days, at no cost and no risk. I am one call away.</div>
+    </div>
+
+    <!-- contact -->
+    <div class="contact">
+      <div>
+        <div class="nm">John Evans Okyere</div>
+        <div class="role">Ananse AI Labs</div>
+      </div>
+      <div class="det">
+        📞 0544954643<br>
+        ✉️ okyerevansjohn@gmail.com
+      </div>
+    </div>
+
+    <!-- acceptance -->
+    <h2>Acceptance <span style="font-weight:400;font-size:12px;color:var(--muted)">(optional, for your records)</span></h2>
+    <p style="font-size:12.5px">By signing below, Sonrisa Dental agrees to begin a free 60-day pilot with
+    Ananse AI Labs. There is no cost and no obligation to continue beyond Day 60.</p>
+    <div class="sign">
+      <div><div class="slabel">Authorised by (name &amp; role)</div><div class="sline"></div></div>
+      <div><div class="slabel">Date</div><div class="sline"></div></div>
+      <div><div class="slabel">Signature</div><div class="sline"></div></div>
+      <div><div class="slabel">Email / phone</div><div class="sline"></div></div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <span><b>Ananse AI Labs</b> — intelligent WhatsApp agents for Ghanaian businesses.</span>
+    <span>Free 60-day pilot · No cost · No obligation</span>
+  </div>
+
+</div>
+</body>
+</html>

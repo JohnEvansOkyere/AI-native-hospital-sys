@@ -1,0 +1,6 @@
+audio_file,scenario_id,speaker_id,noise_condition,transcript_override
+S01_E01_quiet.m4a,E01,S01,quiet,
+S01_T06_quiet.m4a,T06,S01,quiet,
+S01_T06_noisy.m4a,T06,S01,noisy,
+S02_P02_quiet.wav,P02,S02,quiet,
+S02_S01_quiet.wav,S01,S02,quiet,"(hand-transcribe spontaneous speech here, exactly as spoken)"
