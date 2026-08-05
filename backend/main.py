@@ -186,6 +186,28 @@ async def get_patient_full(patient_id: int, db: Connection) -> dict:
         for e in escs
     ]
 
+    # Keep the last handled cases beside the live record. This is the outcome
+    # side of the signal -> action -> outcome loop and gives staff an audit
+    # trail without mixing resolved work back into the urgent queue.
+    cursor = await db.execute(
+        """SELECT id, reason, risk_level, details, created_at, resolution_code,
+                  resolution_note, resolved_by, resolved_at
+           FROM escalations
+           WHERE patient_id=? AND resolved=1
+           ORDER BY resolved_at DESC LIMIT 5""",
+        (patient_id,),
+    )
+    resolved_escalations = await cursor.fetchall()
+    patient["recent_resolutions"] = [
+        {
+            "id": e[0], "reason": e[1], "risk_level": e[2],
+            "details": json.loads(e[3]), "created_at": e[4],
+            "resolution_code": e[5], "resolution_note": e[6],
+            "resolved_by": e[7], "resolved_at": e[8],
+        }
+        for e in resolved_escalations
+    ]
+
     # Last checkin
     cursor = await db.execute(
         "SELECT reading_type, reading_value, risk_level, created_at FROM checkin_logs WHERE patient_id=? ORDER BY created_at DESC LIMIT 1",
@@ -340,6 +362,26 @@ async def get_messages(patient_id: int, limit: int = 50):
 
 class InboundMessage(BaseModel):
     message: str
+
+
+class OutreachRequest(BaseModel):
+    message: str
+
+
+ResolutionCode = Literal[
+    "patient_contacted",
+    "appointment_booked",
+    "nhis_alternative_arranged",
+    "refill_arranged",
+    "clinician_reviewed",
+    "other",
+]
+
+
+class ResolveAlertRequest(BaseModel):
+    resolution_code: ResolutionCode
+    note: str = ""
+    resolved_by: str = "Care team"
 
 
 async def ingest_patient_message(patient_id: int, text: str, voice: dict | None = None,
@@ -678,21 +720,77 @@ async def get_voice_note(filename: str):
 
 # ── Routes: actions ───────────────────────────────────────────────────────────
 
+async def send_care_team_message(patient_id: int, body: str, db: Connection) -> dict:
+    """Deliver one approved care-team message and record the actual channel.
+
+    With Meta configured this is a real WhatsApp send. Without it, the message
+    is still written to the simulator conversation so the full workflow remains
+    demo-able and never hard-fails because a key or network is missing.
+    """
+    body = body.strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    if len(body) > 1000:
+        raise HTTPException(status_code=400, detail="Message must be 1000 characters or fewer")
+
+    cursor = await db.execute("SELECT name, phone FROM patients WHERE id=?", (patient_id,))
+    patient = await cursor.fetchone()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    delivered = False
+    channel = "simulator"
+    if whatsapp.is_configured():
+        delivered = await whatsapp.send_text(patient[1], body)
+        if delivered:
+            channel = "whatsapp"
+
+    now = datetime.now().isoformat()
+    cursor = await db.execute(
+        "INSERT INTO messages (patient_id, direction, body, created_at, channel) VALUES (?,?,?,?,?)",
+        (patient_id, "outbound", body, now, channel),
+    )
+    await db.commit()
+    message = {
+        "id": cursor.lastrowid,
+        "direction": "outbound",
+        "body": body,
+        "reason": None,
+        "created_at": now,
+        "channel": channel,
+        "audio_file": None,
+        "stt_provider": None,
+        "stt_language": None,
+        "stt_latency_ms": None,
+    }
+    event = {"type": "message", "message": message, "patient_id": patient_id}
+    await manager.broadcast(patient_id, event)
+    await manager.broadcast_all(event)
+    return {
+        "message": message,
+        "delivered": delivered,
+        "channel": channel,
+        "delivery_note": (
+            "Sent on WhatsApp" if delivered
+            else "Saved to the demo conversation; WhatsApp delivery is not configured"
+        ),
+    }
+
+
+@app.post("/api/patients/{patient_id}/outreach")
+async def send_outreach(patient_id: int, body: OutreachRequest):
+    """Send a human-authored care-team message to a patient."""
+    async with db_store.connect() as db:
+        return await send_care_team_message(patient_id, body.message, db)
+
 @app.post("/api/patients/{patient_id}/remind")
 async def send_reminder(patient_id: int):
-    """Send the category-specific care reminder (demo trigger)."""
+    """Send the category-specific care reminder."""
     async with db_store.connect() as db:
         reminder = await trigger_care_reminder(patient_id, db)
-        now = datetime.now().isoformat()
-        cursor = await db.execute(
-            "INSERT INTO messages (patient_id, direction, body, created_at) VALUES (?,?,?,?)",
-            (patient_id, "outbound", reminder, now)
-        )
-        mid = cursor.lastrowid
-        await db.commit()
-        msg = {"id": mid, "direction": "outbound", "body": reminder, "reason": None, "created_at": now}
-        await manager.broadcast(patient_id, {"type": "message", "message": msg})
-        return msg
+        if not reminder:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        return await send_care_team_message(patient_id, reminder, db)
 
 
 @app.post("/api/patients/{patient_id}/checkin")
@@ -700,16 +798,9 @@ async def send_checkin(patient_id: int):
     """Send the category-specific check-in prompt."""
     async with db_store.connect() as db:
         prompt = await trigger_checkin(patient_id, db)
-        now = datetime.now().isoformat()
-        cursor = await db.execute(
-            "INSERT INTO messages (patient_id, direction, body, created_at) VALUES (?,?,?,?)",
-            (patient_id, "outbound", prompt, now)
-        )
-        mid = cursor.lastrowid
-        await db.commit()
-        msg = {"id": mid, "direction": "outbound", "body": prompt, "reason": None, "created_at": now}
-        await manager.broadcast(patient_id, {"type": "message", "message": msg})
-        return msg
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        return await send_care_team_message(patient_id, prompt, db)
 
 
 # ── Routes: alerts ────────────────────────────────────────────────────────────
@@ -734,12 +825,58 @@ async def get_alerts():
 
 
 @app.post("/api/alerts/{alert_id}/resolve")
-async def resolve_alert(alert_id: int):
+async def resolve_alert(alert_id: int, body: ResolveAlertRequest):
     async with db_store.connect() as db:
-        await db.execute("UPDATE escalations SET resolved=1 WHERE id=?", (alert_id,))
+        cursor = await db.execute(
+            "SELECT patient_id FROM escalations WHERE id=? AND resolved=0",
+            (alert_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Open alert not found")
+        patient_id = row[0]
+
+        note = body.note.strip()
+        resolved_by = body.resolved_by.strip() or "Care team"
+        if len(note) > 1000:
+            raise HTTPException(status_code=400, detail="Resolution note must be 1000 characters or fewer")
+        if len(resolved_by) > 100:
+            raise HTTPException(status_code=400, detail="Resolved by must be 100 characters or fewer")
+
+        resolved_at = datetime.now().isoformat()
+        await db.execute(
+            """UPDATE escalations
+               SET resolved=1, resolution_code=?, resolution_note=?, resolved_by=?, resolved_at=?
+               WHERE id=?""",
+            (body.resolution_code, note, resolved_by, resolved_at, alert_id),
+        )
+
+        # Risk is active operational state, not a permanent label. Recalculate
+        # it deterministically from the patient's remaining open alerts.
+        cursor = await db.execute(
+            """SELECT risk_level FROM escalations
+               WHERE patient_id=? AND resolved=0
+               ORDER BY CASE risk_level WHEN 'red' THEN 0 ELSE 1 END LIMIT 1""",
+            (patient_id,),
+        )
+        remaining = await cursor.fetchone()
+        risk_level = remaining[0] if remaining else "green"
+        await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk_level, patient_id))
         await db.commit()
-        await manager.broadcast_all({"type": "alert_resolved", "alert_id": alert_id})
-        return {"resolved": True}
+        patient = await get_patient_full(patient_id, db)
+        await manager.broadcast_all({
+            "type": "alert_resolved",
+            "alert_id": alert_id,
+            "patient_id": patient_id,
+            "patient": patient,
+        })
+        return {
+            "resolved": True,
+            "alert_id": alert_id,
+            "patient_id": patient_id,
+            "risk_level": risk_level,
+            "resolved_at": resolved_at,
+        }
 
 
 # ── Routes: reports ───────────────────────────────────────────────────────────

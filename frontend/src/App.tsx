@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api, Patient, Message, Escalation, LanguagePair, SttStatus } from './api/client'
 import { ClinicDashboard } from './components/ClinicDashboard'
+import { CareActionPanel } from './components/CareActionPanel'
 import ReactMarkdown from 'react-markdown'
 import {
   Activity, AlertTriangle, Bell, CheckCircle, ChevronRight,
@@ -902,6 +903,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [showEnroll, setShowEnroll] = useState(false)
   const [showReport, setShowReport] = useState(false)
+  const [activeAlert, setActiveAlert] = useState<Escalation | null>(null)
   const [loading, setLoading] = useState(true)
   // 'clinic' is the real product surface; 'demo' is the WhatsApp simulator kept
   // as a fallback for when the live webhook can't be reached.
@@ -934,6 +936,9 @@ export default function App() {
     }
     if (data.type === 'alert_resolved') {
       setAlerts(prev => prev.filter(a => a.id !== data.alert_id))
+      if (data.patient) {
+        setPatients(prev => prev.map(p => p.id === data.patient.id ? data.patient : p))
+      }
     }
     // A message landed on some channel — WhatsApp included. Nudge the open
     // timeline to refetch so the clinic view stays live.
@@ -970,12 +975,22 @@ export default function App() {
     setRefreshKey(k => k + 1)
   }, [selectedId])
 
-  const handleResolve = useCallback(async (id: number) => {
-    await api.resolveAlert(id)
-    setAlerts(prev => prev.filter(a => a.id !== id))
-    // Resolving can change the patient's risk level, so refetch the roster.
-    api.getPatients().then(setPatients)
+  const openCareCase = useCallback((alert: Escalation) => {
+    if (alert.patient_id) setSelectedId(alert.patient_id)
+    setActiveAlert(alert)
   }, [])
+
+  const handleResolve = useCallback((id: number) => {
+    const alert = alerts.find(item => item.id === id)
+    if (alert) openCareCase(alert)
+  }, [alerts, openCareCase])
+
+  const handleCaseResolved = useCallback((id: number) => {
+    setAlerts(prev => prev.filter(alert => alert.id !== id))
+    setActiveAlert(null)
+    loadData()
+    setRefreshKey(key => key + 1)
+  }, [loadData])
 
   if (loading) return (
     <div className="flex items-center justify-center h-screen bg-slate-50">
@@ -1067,7 +1082,8 @@ export default function App() {
           alerts={alerts}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onResolve={handleResolve}
+          onOpenAlert={openCareCase}
+          onActivity={handlePatientUpdate}
           refreshKey={refreshKey}
         />
       ) : (
@@ -1136,6 +1152,22 @@ export default function App() {
         }} />
       )}
       {showReport && <ReportModal onClose={() => setShowReport(false)} />}
+      {activeAlert && (
+        <CareActionPanel
+          alert={activeAlert}
+          patient={patients.find(patient => patient.id === activeAlert.patient_id) || null}
+          onClose={() => setActiveAlert(null)}
+          onResolved={handleCaseResolved}
+          onMessageSent={() => {
+            setRefreshKey(key => key + 1)
+            if (activeAlert.patient_id) {
+              api.getPatient(activeAlert.patient_id).then(patient => {
+                setPatients(prev => prev.map(existing => existing.id === patient.id ? patient : existing))
+              })
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

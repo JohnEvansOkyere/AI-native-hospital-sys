@@ -24,6 +24,7 @@ export interface Patient {
   streak: number
   last_checkin: { type: string; value: string; risk: string; at: string } | null
   escalations: Escalation[]
+  recent_resolutions: Escalation[]
   current_flow: string
 }
 
@@ -78,6 +79,25 @@ export interface Escalation {
   risk_level: 'amber' | 'red'
   details: Record<string, unknown>
   created_at: string
+  resolution_code?: ResolutionCode | ''
+  resolution_note?: string
+  resolved_by?: string
+  resolved_at?: string | null
+}
+
+export type ResolutionCode =
+  | 'patient_contacted'
+  | 'appointment_booked'
+  | 'nhis_alternative_arranged'
+  | 'refill_arranged'
+  | 'clinician_reviewed'
+  | 'other'
+
+export interface DeliveryResult {
+  message: Message
+  delivered: boolean
+  channel: string
+  delivery_note: string
 }
 
 export const api = {
@@ -155,13 +175,28 @@ export const api = {
     return `${BASE}/voice/${filename}`
   },
 
-  async sendReminder(patientId: number) {
-    const r = await fetch(`${BASE}/patients/${patientId}/remind`, { method: 'POST' })
+  async sendOutreach(patientId: number, message: string): Promise<DeliveryResult> {
+    const r = await fetch(`${BASE}/patients/${patientId}/outreach`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      throw new Error(err.detail || 'Message could not be sent')
+    }
     return r.json()
   },
 
-  async sendCheckin(patientId: number) {
+  async sendReminder(patientId: number): Promise<DeliveryResult> {
+    const r = await fetch(`${BASE}/patients/${patientId}/remind`, { method: 'POST' })
+    if (!r.ok) throw new Error('Care reminder could not be sent')
+    return r.json()
+  },
+
+  async sendCheckin(patientId: number): Promise<DeliveryResult> {
     const r = await fetch(`${BASE}/patients/${patientId}/checkin`, { method: 'POST' })
+    if (!r.ok) throw new Error('Check-in could not be sent')
     return r.json()
   },
 
@@ -170,8 +205,21 @@ export const api = {
     return r.json()
   },
 
-  async resolveAlert(id: number) {
-    await fetch(`${BASE}/alerts/${id}/resolve`, { method: 'POST' })
+  async resolveAlert(id: number, data: {
+    resolution_code: ResolutionCode
+    note?: string
+    resolved_by?: string
+  }): Promise<{ resolved: boolean; patient_id: number; risk_level: string; resolved_at: string }> {
+    const r = await fetch(`${BASE}/alerts/${id}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      throw new Error(err.detail || 'Alert could not be resolved')
+    }
+    return r.json()
   },
 
   async getWeeklyReport(): Promise<{ report: string; generated_at: string }> {

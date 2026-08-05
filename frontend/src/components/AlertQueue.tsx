@@ -12,7 +12,7 @@ import { reasonLabel, riskColors, timeAgo } from './shared'
 
 type Props = {
   alerts: Escalation[]
-  onResolve: (id: number) => void
+  onOpenAlert: (alert: Escalation) => void
   onSelectPatient: (patientId: number) => void
 }
 
@@ -37,7 +37,7 @@ function nextAction(alert: Escalation): string {
   return 'Review and contact patient'
 }
 
-export function AlertQueue({ alerts, onResolve, onSelectPatient }: Props) {
+export function AlertQueue({ alerts, onOpenAlert, onSelectPatient }: Props) {
   const ordered = [...alerts].sort((a, b) => {
     if (a.risk_level !== b.risk_level) return a.risk_level === 'red' ? -1 : 1
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -96,10 +96,10 @@ export function AlertQueue({ alerts, onResolve, onSelectPatient }: Props) {
                     </div>
 
                     <button
-                      onClick={() => onResolve(a.id)}
-                      title="Mark as handled"
-                      className="flex-shrink-0 text-[11px] px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition">
-                      Done
+                      onClick={() => onOpenAlert(a)}
+                      title="Open the care workflow"
+                      className="flex-shrink-0 text-[11px] px-2 py-1 rounded-lg border border-slate-800 bg-slate-800 text-white hover:bg-slate-700 transition">
+                      Work case
                     </button>
                   </div>
                 </li>

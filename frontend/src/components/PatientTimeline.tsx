@@ -10,7 +10,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  Activity, AlertTriangle, Mic, MessageCircle, Phone, Pill, Radio, User,
+  Activity, AlertTriangle, Bell, CheckCircle2, ClipboardCheck, Loader2, Mic,
+  MessageCircle, Phone, Pill, Radio, Send, User,
 } from 'lucide-react'
 import { api, Escalation, Message, Patient } from '../api/client'
 import {
@@ -18,7 +19,7 @@ import {
   parseBP, providerLabel, reasonLabel, reasonStyle, riskColors, timeAgo,
 } from './shared'
 
-type Props = { patient: Patient; refreshKey?: number }
+type Props = { patient: Patient; refreshKey?: number; onActivity?: () => void }
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -132,9 +133,12 @@ function MessageBubble({ msg }: { msg: Message }) {
   )
 }
 
-export function PatientTimeline({ patient, refreshKey = 0 }: Props) {
+export function PatientTimeline({ patient, refreshKey = 0, onActivity }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
+  const [draft, setDraft] = useState('')
+  const [actionBusy, setActionBusy] = useState<'reminder' | 'checkin' | 'message' | null>(null)
+  const [actionStatus, setActionStatus] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const seq = useRef(0)
 
@@ -152,6 +156,39 @@ export function PatientTimeline({ patient, refreshKey = 0 }: Props) {
 
   const voiceCount = messages.filter(m => m.audio_file).length
   const whatsappCount = messages.filter(m => m.channel === 'whatsapp').length
+
+  async function runAction(kind: 'reminder' | 'checkin') {
+    setActionBusy(kind)
+    setActionStatus(null)
+    try {
+      const result = kind === 'reminder'
+        ? await api.sendReminder(patient.id)
+        : await api.sendCheckin(patient.id)
+      setActionStatus({ tone: 'success', text: result.delivery_note })
+      onActivity?.()
+    } catch (error) {
+      setActionStatus({ tone: 'error', text: error instanceof Error ? error.message : 'Action failed' })
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
+  async function sendMessage(event: React.FormEvent) {
+    event.preventDefault()
+    if (!draft.trim()) return
+    setActionBusy('message')
+    setActionStatus(null)
+    try {
+      const result = await api.sendOutreach(patient.id, draft)
+      setDraft('')
+      setActionStatus({ tone: 'success', text: result.delivery_note })
+      onActivity?.()
+    } catch (error) {
+      setActionStatus({ tone: 'error', text: error instanceof Error ? error.message : 'Message could not be sent' })
+    } finally {
+      setActionBusy(null)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full gap-3 min-h-0">
@@ -173,6 +210,20 @@ export function PatientTimeline({ patient, refreshKey = 0 }: Props) {
             </p>
           </div>
           <AdherenceRing pct={patient.care_completion_pct} size={52} />
+        </div>
+
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-50">
+          <button onClick={() => runAction('reminder')} disabled={actionBusy !== null}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50 transition">
+            {actionBusy === 'reminder' ? <Loader2 size={12} className="animate-spin" /> : <Bell size={12} />}
+            Send care reminder
+          </button>
+          <button onClick={() => runAction('checkin')} disabled={actionBusy !== null}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50 transition">
+            {actionBusy === 'checkin' ? <Loader2 size={12} className="animate-spin" /> : <ClipboardCheck size={12} />}
+            Request check-in
+          </button>
+          <span className="ml-auto text-[10px] text-slate-400">Human-triggered · logged automatically</span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-3 border-t border-slate-50">
@@ -201,6 +252,27 @@ export function PatientTimeline({ patient, refreshKey = 0 }: Props) {
               <h3 className="text-xs font-semibold text-slate-700">Open escalations</h3>
             </div>
             <EscalationList escalations={patient.escalations} />
+          </div>
+        )}
+        {(patient.recent_resolutions || []).length > 0 && (
+          <div className="mt-3 pt-3 border-t border-slate-50">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle2 size={13} className="text-emerald-500" />
+              <h3 className="text-xs font-semibold text-slate-700">Recently handled</h3>
+            </div>
+            <div className="space-y-1.5">
+              {patient.recent_resolutions.slice(0, 2).map(item => (
+                <div key={item.id} className="rounded-xl bg-emerald-50/70 border border-emerald-100 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-semibold text-emerald-800">
+                      {(item.resolution_code || 'Handled').replace(/_/g, ' ')}
+                    </p>
+                    <span className="ml-auto text-[10px] text-emerald-600">{item.resolved_at ? timeAgo(item.resolved_at) : ''}</span>
+                  </div>
+                  {item.resolution_note && <p className="text-[11px] text-slate-600 mt-0.5">{item.resolution_note}</p>}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -237,6 +309,28 @@ export function PatientTimeline({ patient, refreshKey = 0 }: Props) {
           )}
           <div ref={bottomRef} />
         </div>
+        <form onSubmit={sendMessage} className="border-t border-slate-100 bg-white p-3 flex items-end gap-2">
+          <div className="flex-1">
+            <label className="block text-[10px] uppercase tracking-wide font-semibold text-slate-400 mb-1">Care-team message</label>
+            <textarea value={draft} onChange={event => setDraft(event.target.value)} rows={2}
+              placeholder={`Message ${patient.name.split(' ')[0]}…`}
+              className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" />
+          </div>
+          <button type="submit" disabled={actionBusy !== null || !draft.trim()}
+            className="h-9 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
+            {actionBusy === 'message' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+            Send
+          </button>
+        </form>
+        {actionStatus && (
+          <div className={`px-3 py-1.5 text-[10px] font-medium border-t ${
+            actionStatus.tone === 'success'
+              ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
+              : 'bg-red-50 border-red-100 text-red-700'
+          }`}>
+            {actionStatus.text}
+          </div>
+        )}
       </div>
     </div>
   )
