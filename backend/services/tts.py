@@ -52,6 +52,19 @@ INTRON_TTS_URL = "https://infer.voice.intron.io/tts/v1/generate"
 INTRON_MIN_INTERVAL_S = 2.1      # 30 req/min, same limiter as Sahara STT
 INTRON_MAX_CHARS = 4096
 
+# Give up on Intron well before its own 120s deadline.
+#
+# Matching their deadline is the worst possible value, and we shipped it that
+# way: on 5 Aug 2026 Intron's queue backed up, every request ran the full 120s
+# to a 503, and patients waited 2m02s for a reply Cartesia then synthesised in
+# 0.7s. Healthy Intron responses that day were 8.9s and 17-25s, so 20s keeps the
+# African accent whenever the service is actually up and caps the loss when it
+# isn't. Raise it if you would rather wait than switch voices.
+INTRON_TIMEOUT_S = float(os.getenv("INTRON_TTS_TIMEOUT_S", "20"))
+# The generated file is a plain CDN download once synthesis is done, so it gets
+# its own smaller budget rather than eating the synthesis one.
+INTRON_DOWNLOAD_TIMEOUT_S = 30.0
+
 # Intron's TTS accent list has no Twi, Akan or Ga, and no Ghanaian English —
 # docs.voice.intron.io/docs/tts/supported-languages-and-accents. English accents
 # are afrikaans, hausa, igbo, luganda, sepedi, swahili, setswana, xhosa, yoruba,
@@ -184,18 +197,21 @@ class IntronTTS:
                 "voice_gender": os.getenv("INTRON_TTS_GENDER", INTRON_TTS_GENDER),
                 "output_audio_format": self.CONTAINERS[fmt],
             },
-            timeout=120,
+            timeout=INTRON_TIMEOUT_S,
         )
         resp.raise_for_status()
 
-        # The 503-with-a-text_id path is a deferred result, not audio. Raising
-        # here sends us to the next provider instead of stalling the reply.
+        # The 503-with-a-text_id path is a deferred result, not audio: the job
+        # is queued and /tts/v1/status/{text_id} will have it eventually. That
+        # is no use to a patient waiting on a reply — one observed job was still
+        # PROCESSING six minutes later — so raising here sends us to the next
+        # provider instead of stalling the conversation.
         data = resp.json().get("data") or {}
         audio_url = data.get("audio_path")
         if not audio_url:
             raise RuntimeError(f"no audio_path in response: {str(data)[:120]}")
 
-        audio = requests.get(audio_url, timeout=60)
+        audio = requests.get(audio_url, timeout=INTRON_DOWNLOAD_TIMEOUT_S)
         audio.raise_for_status()
         return audio.content, fmt, f"{voice_accent}/{voice_language}"
 
@@ -284,6 +300,46 @@ _cache: dict[str, object] = {}
 # which voice is actually serving rather than which one we hoped would.
 _degraded: dict[str, str] = {}
 
+# ── Circuit breaker ───────────────────────────────────────────────────────────
+#
+# A timeout is bounded per request but unbounded across a conversation: during
+# the 5 Aug 2026 Intron outage every single message paid the full wait before
+# falling through. After TTS_TRIP_AFTER consecutive failures a provider is
+# skipped for TTS_COOLDOWN_S, so an outage costs the wait once rather than once
+# per reply.
+#
+# Deliberately in-memory, and deliberately not depended on: serverless instances
+# come and go, so a cold one will retry the sick provider and re-trip. That is
+# the correct failure mode — a breaker that survived deploys could keep a
+# recovered provider benched with no way to notice. This is an optimisation, and
+# correctness never rests on it.
+_TRIP_AFTER = int(os.getenv("TTS_TRIP_AFTER", "2"))
+_COOLDOWN_S = float(os.getenv("TTS_COOLDOWN_S", "600"))
+
+_consecutive_failures: dict[str, int] = {}
+_skip_until: dict[str, float] = {}
+
+
+def _note_failure(name: str) -> None:
+    n = _consecutive_failures.get(name, 0) + 1
+    _consecutive_failures[name] = n
+    if n >= _TRIP_AFTER:
+        _skip_until[name] = time.time() + _COOLDOWN_S
+        logger.warning(
+            "TTS provider %r failed %d times in a row; benching it for %.0fs",
+            name, n, _COOLDOWN_S,
+        )
+
+
+def _note_success(name: str) -> None:
+    _consecutive_failures.pop(name, None)
+    _skip_until.pop(name, None)
+
+
+def cooling_down(name: str) -> float:
+    """Seconds until this provider is worth trying again; 0 if it's live."""
+    return max(0.0, _skip_until.get(name, 0.0) - time.time())
+
 
 def get_provider(name: str):
     if name in _cache:
@@ -340,11 +396,22 @@ def synthesize_sync(text: str, language: str = "en", provider: str | None = None
         [os.getenv("TTS_PROVIDER")] if os.getenv("TTS_PROVIDER") else provider_order()
     )
     order = [n for n in order if n in REGISTRY]
+
+    # Step over benched providers — but only when choosing for ourselves. An
+    # explicit `provider=` is an operator saying "use this one", which must not
+    # be silently redirected, and if everything is benched we try anyway:
+    # best-effort beats going mute on the strength of a cache.
+    if not provider:
+        live = [n for n in order if not cooling_down(n)]
+        if live:
+            order = live
+
     errors = []
 
     for name in order:
         p = get_provider(name)
         if p is None:
+            # Missing key is a configuration fact, not a fault — never trips.
             errors.append(f"{name}: not configured")
             continue
         started = time.time()
@@ -353,11 +420,14 @@ def synthesize_sync(text: str, language: str = "en", provider: str | None = None
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}: {e}")
             _degraded[name] = str(e)[:200]
+            _note_failure(name)
             continue
         if not audio:
             errors.append(f"{name}: empty audio")
+            _note_failure(name)
             continue
         _degraded.pop(name, None)      # recovered
+        _note_success(name)
         suffix, mime = FORMATS[fmt]
         return SynthesisResult(
             audio=audio, fmt=fmt, mime=mime, suffix=suffix,

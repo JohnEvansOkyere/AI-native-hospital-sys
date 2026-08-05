@@ -129,10 +129,23 @@ Two things to know before you promise a Ghanaian voice:
   English accents, none Ghanaian. `INTRON_TTS_ACCENT` defaults to `hausa`, the
   only one of the ten also spoken in Ghana. Sahara *recognises* tw/ak/gaa; nothing
   yet *speaks* them.
-- **Intron is slow.** Measured 5 Aug 2026 on a one-sentence reply: Intron 17–25s,
-  Cartesia 2.8s. WhatsApp is asynchronous so this is a delay rather than a
-  failure, but if it's too long for your pilot set `TTS_ORDER=cartesia,intron`,
-  which reorders the chain without losing the fallback.
+- **Intron is slow, and sometimes very slow.** Measured 5 Aug 2026 on a
+  one-sentence reply: Intron 17–25s, Cartesia 2.8s. WhatsApp is asynchronous so
+  that is a delay rather than a failure, but if it's too long for your pilot set
+  `TTS_ORDER=cartesia,intron`, which reorders the chain without losing fallback.
+
+Its sync endpoint answers **HTTP 503 with a `text_id`** rather than audio when
+its queue can't finish inside 120s — documented behaviour, not an error. The
+client treats that as a failure and moves to the next provider, because the
+queued job is no use to someone waiting on a reply: one observed job was still
+`TTS_TEXT_PROCESSING` six minutes later.
+
+Two settings keep that from reaching the patient. `INTRON_TTS_TIMEOUT_S`
+(default 20) gives up long before Intron's own deadline, and a circuit breaker
+benches a provider for `TTS_COOLDOWN_S` after `TTS_TRIP_AFTER` consecutive
+failures. During the 5 Aug backlog this took the cost of a reply from 122s, to
+22s, to 1.8s once the breaker tripped. `/api/tts/status` reports `cooling_down`
+so an outage looks like an outage instead of a mystery.
 
 Deployed, voice notes need a **hosted** STT provider; the local offline engine
 isn't installed on Vercel. See [DEPLOY.md](DEPLOY.md#speech-to-text-on-vercel).

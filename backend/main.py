@@ -573,7 +573,11 @@ async def tts_status():
     """
     configured = tts.configured_providers()
     pinned = os.getenv("TTS_PROVIDER") or None
-    healthy = [n for n in configured if n not in tts._degraded]
+    # Benched providers are excluded from "active" too: during an outage the
+    # honest answer to "which voice is speaking" is the fallback, not the one at
+    # the head of the chain that every request is currently skipping.
+    cooling = {n: round(tts.cooling_down(n)) for n in configured if tts.cooling_down(n)}
+    healthy = [n for n in configured if n not in tts._degraded and n not in cooling]
     active = pinned if pinned in healthy else next(
         (n for n in tts.provider_order() if n in healthy), None
     )
@@ -582,6 +586,7 @@ async def tts_status():
         "pinned": pinned,
         "active": active,
         "degraded": tts._degraded,
+        "cooling_down": cooling,
         "mode": tts.mode(),
         "enabled": bool(configured) and tts.mode() != "off",
     }
