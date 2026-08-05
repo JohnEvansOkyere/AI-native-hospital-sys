@@ -11,12 +11,12 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Activity, AlertTriangle, Bell, ClipboardCheck, Loader2, Mic,
-  MessageCircle, Phone, Pill, Radio, Send, User,
+  MessageCircle, Phone, Pill, Radio, Send, User, Volume2,
 } from 'lucide-react'
 import { api, Message, Patient } from '../api/client'
 import {
   AdherenceRing, RiskBadge, bpRisk, channelLabel, formatDate, formatTime,
-  parseBP, providerLabel, reasonLabel, reasonStyle, riskColors, timeAgo,
+  parseBP, providerLabel, reasonLabel, reasonStyle, riskColors, timeAgo, voiceLabel,
 } from './shared'
 
 type Props = { patient: Patient; refreshKey?: number; onActivity?: () => void }
@@ -52,26 +52,37 @@ function MessageBubble({ msg }: { msg: Message }) {
         isClinic ? 'bg-white border border-slate-100 text-slate-700' : 'bg-emerald-600 text-white'}`}>
 
         {msg.audio_file && (
+          // Audio runs both ways, and the provenance differs by direction: on a
+          // patient's voice note it says which model *heard* them, on a clinic
+          // reply which voice *spoke*. Reading stt_provider on an outbound
+          // message would label the agent's own voice "transcribed by unknown".
           <div className="mb-2">
             <audio controls src={api.voiceNoteUrl(msg.audio_file)} className="h-8 w-full max-w-[230px]" />
             <div className={`mt-1 flex items-center gap-1 flex-wrap text-[10px] ${
               isClinic ? 'text-slate-500' : 'text-emerald-100'}`}>
-              <Mic size={9} />
-              <span>transcribed by</span>
+              {isClinic ? <Volume2 size={9} /> : <Mic size={9} />}
+              <span>{isClinic ? 'spoken by' : 'transcribed by'}</span>
               <span className="font-semibold">
-                {msg.stt_provider ? providerLabel(msg.stt_provider) : 'unknown'}
+                {isClinic
+                  ? (msg.tts_provider ? voiceLabel(msg.tts_provider) : 'unknown')
+                  : (msg.stt_provider ? providerLabel(msg.stt_provider) : 'unknown')}
               </span>
-              {msg.stt_language && (
+              {(isClinic ? msg.tts_voice : msg.stt_language) && (
                 <span className={`px-1 rounded ${isClinic ? 'bg-slate-100' : 'bg-emerald-700'}`}>
-                  {msg.stt_language}
+                  {isClinic ? msg.tts_voice : msg.stt_language}
                 </span>
               )}
-              {!!msg.stt_latency_ms && <span>· {(msg.stt_latency_ms / 1000).toFixed(1)}s</span>}
+              {isClinic
+                ? !!msg.tts_latency_ms && <span>· {(msg.tts_latency_ms / 1000).toFixed(1)}s</span>
+                : !!msg.stt_latency_ms && <span>· {(msg.stt_latency_ms / 1000).toFixed(1)}s</span>}
             </div>
           </div>
         )}
 
-        <p className={msg.audio_file ? 'italic' : ''}>{msg.body}</p>
+        {/* Italics mark a transcript — words a model guessed at. A spoken reply
+            is the reverse: the text is the source and the audio derives from it,
+            so it stays upright. */}
+        <p className={msg.audio_file && !isClinic ? 'italic' : ''}>{msg.body}</p>
 
         <div className={`mt-1 flex items-center gap-1.5 text-[10px] ${
           isClinic ? 'text-slate-400' : 'text-emerald-100'}`}>

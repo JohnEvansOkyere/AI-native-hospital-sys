@@ -74,6 +74,15 @@ export function providerLabel(p: string): string {
   return p
 }
 
+/** TTS providers are different products from the STT ones sharing their vendor
+ *  name — Cartesia Ink listens, Cartesia Sonic speaks. Kept separate from
+ *  providerLabel so an outbound message never gets labelled with a listener. */
+export function voiceLabel(p: string): string {
+  if (p === 'intron') return 'Intron TTS'
+  if (p === 'cartesia') return 'Cartesia Sonic'
+  return p
+}
+
 export function channelLabel(c?: string | null): string {
   if (c === 'whatsapp') return 'WhatsApp'
   if (c === 'sms') return 'SMS'

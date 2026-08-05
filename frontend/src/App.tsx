@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api, Patient, Message, Escalation, LanguagePair, SttStatus, TtsStatus } from './api/client'
+import { voiceLabel } from './components/shared'
 import { ClinicDashboard } from './components/ClinicDashboard'
 import { CareActionPanel } from './components/CareActionPanel'
 import ReactMarkdown from 'react-markdown'
@@ -92,14 +93,6 @@ function providerLabel(p: string): string {
   if (p === 'openai_whisper') return 'Whisper API'
   if (p === 'sahara') return 'Intron Sahara'
   if (p === 'cartesia') return 'Cartesia Ink'
-  return p
-}
-
-/** TTS providers are different products from the STT ones that share their
- *  vendor name — Cartesia Ink listens, Cartesia Sonic speaks. */
-function voiceLabel(p: string): string {
-  if (p === 'intron') return 'Intron TTS'
-  if (p === 'cartesia') return 'Cartesia Sonic'
   return p
 }
 
