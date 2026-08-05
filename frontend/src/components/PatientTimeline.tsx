@@ -73,7 +73,7 @@ function EscalationList({ escalations }: { escalations: Escalation[] }) {
             <div className="min-w-0">
               <p className={`text-xs font-semibold ${c.text}`}>
                 {reasonLabel[e.reason] || e.reason}
-                {typeof reading === 'string' && <span className="font-mono ml-1">{reading}</span>}
+                {typeof reading === 'string' && !e.reason.includes(reading) && <span className="font-mono ml-1">{reading}</span>}
               </p>
               <p className="text-[11px] text-slate-500">{timeAgo(e.created_at)}</p>
             </div>

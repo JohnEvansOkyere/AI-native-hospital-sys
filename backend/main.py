@@ -177,7 +177,8 @@ async def get_patient_full(patient_id: int, db: Connection) -> dict:
 
     # Active escalations
     cursor = await db.execute(
-        "SELECT id, reason, risk_level, details, created_at FROM escalations WHERE patient_id=? AND resolved=0",
+        """SELECT id, reason, risk_level, details, created_at FROM escalations
+           WHERE patient_id=? AND resolved=0 ORDER BY created_at DESC""",
         (patient_id,)
     )
     escs = await cursor.fetchall()
@@ -215,6 +216,21 @@ async def get_patient_full(patient_id: int, db: Connection) -> dict:
     )
     chk = await cursor.fetchone()
     patient["last_checkin"] = {"type": chk[0], "value": chk[1], "risk": chk[2], "at": chk[3]} if chk else None
+    if not patient["last_checkin"]:
+        # Older demo data recorded the safety escalation before checkin_logs was
+        # introduced. Keep the clinical dashboard internally consistent by
+        # showing that auditable reading instead of claiming there is none.
+        reading_escalation = next(
+            (item for item in patient["escalations"] if item["details"].get("reading")),
+            None,
+        )
+        if reading_escalation:
+            patient["last_checkin"] = {
+                "type": "blood_pressure",
+                "value": reading_escalation["details"]["reading"],
+                "risk": reading_escalation["risk_level"],
+                "at": reading_escalation["created_at"],
+            }
 
     # Streak
     cursor = await db.execute(

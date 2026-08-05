@@ -82,7 +82,7 @@ export function AlertQueue({ alerts, onOpenAlert, onSelectPatient }: Props) {
 
                       <p className="text-xs text-slate-600 mt-0.5">
                         {reasonLabel[a.reason] || a.reason}
-                        {typeof reading === 'string' && (
+                        {typeof reading === 'string' && !a.reason.includes(reading) && (
                           <span className="ml-1 font-mono font-semibold text-slate-800">{reading}</span>
                         )}
                       </p>
