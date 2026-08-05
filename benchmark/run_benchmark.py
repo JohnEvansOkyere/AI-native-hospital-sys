@@ -85,6 +85,11 @@ def normalize(text: str) -> str:
     text = text.lower()
     text = re.sub(r"[^\w\s/ɛɔ]", " ", text)   # keep '/', Twi vowels
     text = _words_to_digits(text)
+    # Canonicalise blood-pressure notation before scoring. A model that hears
+    # "one forty-two over ninety-five" and writes "142/95" has understood it as
+    # a BP — arguably better than a literal transcript — and must not be charged
+    # a WER penalty for the notation. Both forms collapse to "142 over 95".
+    text = re.sub(r"\b(\d{2,3})\s*/\s*(\d{2,3})\b", r"\1 over \2", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -172,7 +177,12 @@ def main():
             continue
 
         ref_norm = normalize(ref_text)
-        bp_ref = scen["bp_ref"].strip() or None
+        # The script is what we asked for; the audio is what was said. When a
+        # speaker deviates on a number, score against the recording — otherwise
+        # every model is penalised for our reference being wrong. Verified
+        # deviations go in the manifest's bp_override column.
+        bp_ref = (item.get("bp_override", "").strip()
+                  or scen["bp_ref"].strip() or None)
         intent_ref = scen["intent_ref"]
         lang = scen["language_pair"]
 

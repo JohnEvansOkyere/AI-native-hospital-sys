@@ -42,6 +42,7 @@ from services.stt import (  # noqa: E402
     CartesiaSTT,
     LocalWhisperSTT,
     OpenAIWhisperSTT,
+    SaharaEnglishSTT,
     SaharaSTT,
     build_providers,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "CartesiaSTT",
     "LocalWhisperSTT",
     "OpenAIWhisperSTT",
+    "SaharaEnglishSTT",
     "SaharaSTT",
     "build_providers",
 ]

@@ -36,14 +36,14 @@ nurse on the phone. Don't over-articulate. Numbers are said as written in words.
 
 | ID | Intent | Script |
 |----|--------|--------|
-| T01 | adherence_yes | "Aane, manom aduro no ɛnnɛ anɔpa." |
-| T02 | cost | "Sika nni hɔ — I can't afford the lisinopril this month." |
+| T01 | adherence_yes | "Aane, manom aduro no ɛnnɛ anɔpa yi." |
+| T02 | cost | "Sika nni hɔ nti — I can't afford the lisinopril this month." |
 | T03 | forgot | "Me werɛ afi — I forgot to take it yesterday evening." |
 | T04 | side_effect | "Sɛ menom aduro no a, me ti pae me. The medicine gives me serious headache." |
 | T05 | ran_out | "Aduro no asa — the amlodipine finished since Friday." |
 | T06 | bp_report (116/78) | "Me BP yɛ one-sixteen over seventy-eight." |
 | T07 | bp_report (160/100) | "Mesusuu me BP ɛnnɛ — it was one-sixty over one hundred." |
-| T08 | book_appointment | "Mepɛ sɛ mebook appointment wɔ Dr. Mensah nkyɛn ɔkyena anɔpa." |
+| T08 | book_appointment | "Mepɛ sɛ mebook appointment 3wɔ Dr. Mensah nkyɛn ɔkyena anɔpa." |
 | T09 | bp_report (175/110) | "Me BP yɛ one seventy-five over one-ten. Ɛbɔ me hu." |
 
 > T06 vs T07 is deliberate: "one-sixteen" vs "one-sixty" is the classic digit

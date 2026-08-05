@@ -166,10 +166,37 @@ hypothesis the recording day is designed to test, not as a result.
 
 Speaker S01, 5 scripted English utterances, quiet condition, 3 Aug 2026:
 
-| provider | n | WER | BP acc | escalation acc | intent acc |
-|---|---|---|---|---|---|
-| cartesia (`ink-whisper`) | 5 | 0.068 | 1.0 | 1.0 | 1.0 |
-| local faster-whisper `base` | 5 | 0.068 | 1.0 | 1.0 | 1.0 |
+| provider | n | WER | BP acc | escalation acc | intent acc | median latency |
+|---|---|---|---|---|---|---|
+| **Intron Sahara** | 5 | **0.054** | 1.0 | 1.0 | 1.0 | ~4.8s† |
+| Cartesia (`ink-whisper`) | 5 | 0.068 | 1.0 | 1.0 | 1.0 | 2.2s |
+| local faster-whisper `base` | 5 | 0.068 | 1.0 | 1.0 | 1.0 | 2.4s |
+
+† The runner reports 6.9s for Sahara, but that includes the client's 2.1s-per-call
+self-throttle for the 30 req/min limit. Report the corrected figure and say why.
+
+**Sahara wins the drug name — the clinically load-bearing word.** On E05 it is the
+only model that transcribes *amlodipine* correctly; Cartesia gives "amlody pain"
+and local Whisper "amlodipian". A garbled drug name in a refill request is a real
+clinical failure, and the African-built model is the one with the pharmaceutical
+vocabulary. Worth a paragraph of its own.
+
+#### Methodology correction — worth reporting, not hiding
+
+The first run scored Sahara **worst** (WER 0.108). It wasn't. Sahara heard
+*"one forty-two over ninety-five"* and wrote **`142/95`** — recognising it as a
+blood pressure — while the others wrote `142 over 95`. Our normaliser tokenised
+`142/95` as one token against three, so WER punished the model that had
+understood the content best.
+
+`normalize()` now canonicalises BP notation before scoring, and Sahara moves from
+0.108 (worst) to 0.054 (best). Nothing about the audio or the models changed.
+
+This belongs in the report as a finding, not a footnote: **it is the benchmark's
+own thesis demonstrated against itself.** WER measures string agreement, not
+comprehension, and it can rank the most useful transcript last. Task-success
+metrics — BP extraction, escalation correctness — were identical at 1.0 across
+all three models throughout, and were never fooled.
 
 **This is the number everything else is measured against.** On clean
 Ghanaian-accented English both models are perfect on task success, so any

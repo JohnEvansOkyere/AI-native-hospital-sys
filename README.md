@@ -35,7 +35,7 @@ that runs entirely offline.
 | [`backend/`](backend/) | FastAPI service — routes, SQLite, bot logic, speech-to-text |
 | [`frontend/`](frontend/) | React + Vite dashboard and WhatsApp simulator |
 | [`benchmark/`](benchmark/) | Code-switch speech benchmark ([README](benchmark/README.md)) |
-| [`docs/`](docs/) | [Architecture](docs/ARCHITECTURE.md) · [Demo script](docs/DEMO.md) · [Challenge entry](docs/CHALLENGE.md) |
+| [`docs/`](docs/) | [Architecture](docs/ARCHITECTURE.md) · [Demo script](docs/DEMO.md) · [Challenge entry](docs/CHALLENGE.md) · [WhatsApp setup](docs/WHATSAPP-SETUP.md) |
 | [`docs/business/`](docs/business/) | Pitch, GTM, long-term product concept |
 
 Agent guidance lives in [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md).

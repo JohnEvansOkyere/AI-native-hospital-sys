@@ -1,0 +1,11 @@
+# Local development and benchmark dependencies.
+#
+# Everything the deployed service needs, plus the local speech-to-text engine
+# that cannot ship to a serverless host. `start.sh` installs this file; Vercel
+# installs requirements.txt.
+-r requirements.txt
+
+# Local open-weights STT: no API key, no network, fully offline. This is the
+# provider that makes the offline claim in the benchmark true, so it must stay
+# installed anywhere the benchmark runs.
+faster-whisper>=1.0

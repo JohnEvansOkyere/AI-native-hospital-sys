@@ -13,10 +13,14 @@ record contains my real health information or personal details.
 
 ## How my recordings will be used
 
-- To test and compare how well speech-recognition systems (including Intron
-  Sahara, OpenAI Whisper, and an open-source model) understand Ghanaian
-  code-switched speech. This means my audio will be sent to these providers'
-  services for transcription.
+- To test and compare how well speech-recognition systems understand Ghanaian
+  code-switched speech. My audio will be sent over the internet to these
+  providers for transcription:
+  - **Intron Sahara** (Intron Health)
+  - **Cartesia Ink**
+  - **OpenAI Whisper** (hosted)
+  - **faster-whisper**, an open-weights model that runs on the researcher's own
+    computer and sends nothing anywhere
 - Recordings are stored **de-identified**: I am identified only by a speaker
   code (e.g. "S02"), never by name. Basic non-identifying metadata is kept
   (age band, gender, region/accent, phone type, noise condition).

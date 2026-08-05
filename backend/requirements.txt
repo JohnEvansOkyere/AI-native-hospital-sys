@@ -6,12 +6,20 @@ python-dotenv==1.0.1
 pydantic==2.9.2
 requests>=2.31
 python-multipart>=0.0.9
+httpx>=0.27
 
-# Speech-to-text providers. All three are optional and load lazily — the app
-# degrades to "I couldn't hear that, please type it" when none are available.
-# Install at least one for the voice demo:
-#   openai          -> hosted whisper-1   (needs OPENAI_API_KEY)
-#   faster-whisper  -> local open weights (needs no key, ~200MB, works offline)
-# Intron Sahara needs no package at all, just INTRON_API_KEY.
+# Turso / libSQL. Only used when TURSO_DATABASE_URL is set; on a local run the
+# app opens the SQLite file directly and never imports this.
+libsql-client>=0.3.1
+
+# Speech-to-text providers. All optional and loaded lazily — the app degrades to
+# "I couldn't hear that, please type it" when none are available.
+#   openai  -> hosted whisper-1 (needs OPENAI_API_KEY)
+# Intron Sahara and Cartesia need no package at all, just their API keys.
 openai>=1.30
-faster-whisper>=1.0
+
+# NOTE: faster-whisper (local, offline, no key) is deliberately NOT here.
+# It pulls ~200MB+ of native deps and downloads model weights to disk at first
+# use, which exceeds the serverless function size limit and has nowhere to write.
+# It stays in the stt.py provider chain and is installed for local runs and the
+# benchmark by requirements-local.txt — offline capability is unchanged off-Vercel.

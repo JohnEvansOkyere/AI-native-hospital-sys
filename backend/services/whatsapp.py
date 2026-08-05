@@ -1,0 +1,153 @@
+"""
+WhatsApp Cloud API adapter — Meta Graph client.
+
+Transport only. This module sends messages, downloads media and validates
+webhook signatures; it knows nothing about patients, adherence or escalation.
+Inbound messages are handed to `ingest_patient_message()` in main.py, which is
+the same path the built-in simulator uses, so WhatsApp and the demo pane run
+identical agent logic.
+
+Setup (Meta for Developers → your app → WhatsApp → Configuration):
+  META_ACCESS_TOKEN     from the API Setup tab
+  META_PHONE_NUMBER_ID  from the API Setup tab (NOT the phone number itself)
+  META_VERIFY_TOKEN     any random string; paste the same value into the webhook form
+  META_APP_SECRET       Settings → Basic; enables request signature checking
+
+Everything degrades gracefully: with no credentials the webhook still starts,
+it just declines to send. The demo must never hard-fail on missing config.
+"""
+
+import hashlib
+import hmac
+import logging
+import os
+from pathlib import Path
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+GRAPH_API = os.getenv("META_GRAPH_API", "https://graph.facebook.com/v19.0")
+
+# WhatsApp voice notes arrive as OGG/Opus. Map Meta's mime types onto the
+# suffixes stt.py accepts, so the provider SDKs sniff the container correctly.
+MIME_SUFFIX = {
+    "audio/ogg": ".ogg",
+    "audio/opus": ".ogg",
+    "audio/mpeg": ".mp3",
+    "audio/mp4": ".m4a",
+    "audio/amr": ".amr",
+    "audio/aac": ".m4a",
+}
+
+
+def is_configured() -> bool:
+    return bool(os.getenv("META_ACCESS_TOKEN") and os.getenv("META_PHONE_NUMBER_ID"))
+
+
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {os.getenv('META_ACCESS_TOKEN')}"}
+
+
+def mask_phone(phone: str) -> str:
+    """Never log a patient's full number — these are health-adjacent identifiers."""
+    return f"{phone[:5]}…{phone[-2:]}" if len(phone) > 7 else "…"
+
+
+def verify_signature(raw_body: bytes, supplied: str | None) -> bool:
+    """Validate Meta's X-Hub-Signature-256 over the raw request body.
+
+    Returns True when META_APP_SECRET is unset — that's the local-dev path, and
+    refusing to boot without it would break the offline demo. Set it in
+    production; the webhook is otherwise an open endpoint.
+    """
+    secret = os.getenv("META_APP_SECRET")
+    if not secret:
+        return True
+    expected = "sha256=" + hmac.new(
+        secret.encode("utf-8"), raw_body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, supplied or "")
+
+
+def verify_challenge(mode: str | None, token: str | None, challenge: str | None) -> int:
+    """Answer Meta's GET verification handshake. Raises ValueError on mismatch."""
+    if mode == "subscribe" and token and token == os.getenv("META_VERIFY_TOKEN"):
+        logger.info("WhatsApp webhook verified")
+        return int(challenge or 0)
+    raise ValueError("verify token mismatch")
+
+
+async def send_text(to: str, body: str) -> bool:
+    """Send a plain text WhatsApp message. Never raises — a failed send must not
+    take down the webhook, or Meta will retry the whole delivery."""
+    if not is_configured():
+        logger.warning("WhatsApp not configured; dropping reply to %s", mask_phone(to))
+        return False
+
+    url = f"{GRAPH_API}/{os.getenv('META_PHONE_NUMBER_ID')}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": body, "preview_url": False},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                url, json=payload, headers={**_auth_headers(), "Content-Type": "application/json"}
+            )
+            resp.raise_for_status()
+        return True
+    except httpx.HTTPStatusError as e:
+        logger.error("WhatsApp send failed to %s: %s — %s",
+                     mask_phone(to), e, e.response.text[:200])
+    except httpx.HTTPError as e:
+        logger.error("WhatsApp HTTP error to %s: %s", mask_phone(to), e)
+    return False
+
+
+async def download_media(media_id: str, dest_dir: Path, stem: str) -> Path | None:
+    """Fetch a voice note by media ID and write it to disk.
+
+    Two hops, per the Cloud API: resolve the ID to a short-lived CDN URL, then
+    download that URL with the same bearer token. Returns the saved path, or
+    None on any failure — the caller asks the patient to resend.
+    """
+    if not is_configured():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            meta = await client.get(f"{GRAPH_API}/{media_id}", headers=_auth_headers())
+            meta.raise_for_status()
+            info = meta.json()
+
+            media_url = info.get("url")
+            if not media_url:
+                logger.error("No media URL for %s: %s", media_id, info)
+                return None
+
+            mime = (info.get("mime_type") or "").split(";")[0].strip()
+            suffix = MIME_SUFFIX.get(mime, ".ogg")
+
+            # The CDN URL still requires the access token.
+            blob = await client.get(media_url, headers=_auth_headers())
+            blob.raise_for_status()
+
+        dest_dir.mkdir(exist_ok=True)
+        path = dest_dir / f"{stem}{suffix}"
+        path.write_bytes(blob.content)
+        return path
+    except Exception as e:
+        logger.error("Media download failed for %s: %s", media_id, e)
+        return None
+
+
+def normalize_phone(phone: str) -> str:
+    """Reduce a phone number to comparable digits.
+
+    Meta sends E.164 without '+' ("233241000001"); patients are stored with it.
+    Stripping non-digits makes both sides comparable without guessing at
+    country-code rules.
+    """
+    return "".join(ch for ch in phone if ch.isdigit())

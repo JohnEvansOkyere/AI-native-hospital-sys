@@ -6,23 +6,37 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional
 
-import aiosqlite
+import db as db_store
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
+from fastapi import (FastAPI, WebSocket, WebSocketDisconnect, HTTPException,
+                     UploadFile, File, Form, Query, Request)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from db import init_db, get_db, DB_PATH
+from db import init_db, get_db, DB_PATH, Connection
 from services.bot import process_message, trigger_care_reminder, trigger_checkin
 from services.ai import generate_weekly_report, display_first_name
-from services import stt
-
-VOICE_DIR = Path(__file__).parent / "voice_notes"
-VOICE_DIR.mkdir(exist_ok=True)
+from services import stt, whatsapp
 
 load_dotenv()
+
+# Serverless bundles are read-only apart from /tmp, and creating this at import
+# time would take the whole app down on boot. Resolve the location eagerly but
+# create the directory lazily, at the point something actually stores audio.
+#
+# On /tmp the files are per-instance and vanish on cold start: a voice note can
+# be transcribed and answered, but playing it back later may 404. The transcript
+# and its provenance live in the database, which is what the clinical record
+# actually depends on.
+VOICE_DIR = Path(os.getenv("VOICE_DIR") or
+                 ("/tmp/voice_notes" if os.getenv("VERCEL") else Path(__file__).parent / "voice_notes"))
+
+
+def ensure_voice_dir() -> Path:
+    VOICE_DIR.mkdir(parents=True, exist_ok=True)
+    return VOICE_DIR
 
 
 # ── WebSocket connection manager ──────────────────────────────────────────────
@@ -80,7 +94,7 @@ app.add_middleware(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def compute_adherence(patient_id: int, db: aiosqlite.Connection, days: int = 14) -> int:
+async def compute_adherence(patient_id: int, db: Connection, days: int = 14) -> int:
     cursor = await db.execute(
         f"SELECT response FROM adherence_logs WHERE patient_id=? AND log_date > date('now', '-{days} days')",
         (patient_id,)
@@ -92,7 +106,7 @@ async def compute_adherence(patient_id: int, db: aiosqlite.Connection, days: int
     return round(yes_count / len(rows) * 100)
 
 
-async def compute_care_completion(patient_id: int, db: aiosqlite.Connection, days: int = 14) -> int:
+async def compute_care_completion(patient_id: int, db: Connection, days: int = 14) -> int:
     cursor = await db.execute(
         f"SELECT response FROM care_logs WHERE patient_id=? AND log_date > date('now', '-{days} days')",
         (patient_id,),
@@ -104,7 +118,7 @@ async def compute_care_completion(patient_id: int, db: aiosqlite.Connection, day
     return round(done_count / len(rows) * 100)
 
 
-async def get_patient_full(patient_id: int, db: aiosqlite.Connection) -> dict:
+async def get_patient_full(patient_id: int, db: Connection) -> dict:
     cursor = await db.execute("SELECT * FROM patients WHERE id=?", (patient_id,))
     p = await cursor.fetchone()
     if not p:
@@ -183,7 +197,7 @@ async def get_patient_full(patient_id: int, db: aiosqlite.Connection) -> dict:
 
 @app.get("/api/patients")
 async def list_patients():
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         cursor = await db.execute("SELECT id FROM patients WHERE status='active' ORDER BY risk_level ASC, name ASC")
         rows = await cursor.fetchall()
         result = []
@@ -196,7 +210,7 @@ async def list_patients():
 
 @app.get("/api/patients/{patient_id}")
 async def get_patient(patient_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         p = await get_patient_full(patient_id, db)
         if not p:
             raise HTTPException(404, "Patient not found")
@@ -220,7 +234,7 @@ class EnrollRequest(BaseModel):
 
 @app.post("/api/patients")
 async def enroll_patient(body: EnrollRequest):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         try:
             category_defaults = {
                 "dental": ("Dental care", "Dental follow-up", "Follow the aftercare instructions from your dental team."),
@@ -283,9 +297,9 @@ async def enroll_patient(body: EnrollRequest):
 
 @app.get("/api/patients/{patient_id}/messages")
 async def get_messages(patient_id: int, limit: int = 50):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         cursor = await db.execute(
-            "SELECT id, direction, body, reason, created_at, audio_file, stt_provider, stt_language, stt_latency_ms "
+            "SELECT id, direction, body, reason, created_at, channel, audio_file, stt_provider, stt_language, stt_latency_ms "
             "FROM messages WHERE patient_id=? ORDER BY created_at DESC LIMIT ?",
             (patient_id, limit)
         )
@@ -293,8 +307,9 @@ async def get_messages(patient_id: int, limit: int = 50):
         return [
             {
                 "id": r[0], "direction": r[1], "body": r[2], "reason": r[3], "created_at": r[4],
-                "audio_file": r[5] or None, "stt_provider": r[6] or None,
-                "stt_language": r[7] or None, "stt_latency_ms": r[8] or None,
+                "channel": r[5] or "simulator",
+                "audio_file": r[6] or None, "stt_provider": r[7] or None,
+                "stt_language": r[8] or None, "stt_latency_ms": r[9] or None,
             }
             for r in reversed(rows)
         ]
@@ -304,23 +319,26 @@ class InboundMessage(BaseModel):
     message: str
 
 
-async def ingest_patient_message(patient_id: int, text: str, voice: dict | None = None):
+async def ingest_patient_message(patient_id: int, text: str, voice: dict | None = None,
+                                 channel: str = "simulator"):
     """Run one inbound patient turn: log it, let the bot act, broadcast everything.
 
-    Text messages and voice notes both land here, so a transcribed voice note
-    takes the exact same path through process_message() — including escalation.
-    That equivalence is what lets the benchmark's escalation-accuracy metric
-    describe the real product rather than a parallel test harness.
+    Every transport lands here — the simulator, WhatsApp, and anything added
+    later. Text and voice both take the exact same path through
+    process_message(), including escalation. That equivalence is what lets the
+    benchmark's escalation-accuracy metric describe the real product rather than
+    a parallel test harness, and it's why new channels must never get their own
+    copy of this logic.
     """
     now = datetime.now().isoformat()
     voice = voice or {}
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         # Log inbound
         cursor = await db.execute(
-            "INSERT INTO messages (patient_id, direction, body, created_at, audio_file, stt_provider, stt_language, stt_latency_ms) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (patient_id, "inbound", text, now, voice.get("audio_file", ""),
+            "INSERT INTO messages (patient_id, direction, body, created_at, channel, audio_file, stt_provider, stt_language, stt_latency_ms) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (patient_id, "inbound", text, now, channel, voice.get("audio_file", ""),
              voice.get("stt_provider", ""), voice.get("stt_language", ""),
              voice.get("stt_latency_ms", 0))
         )
@@ -329,6 +347,7 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
 
         inbound_msg = {
             "id": inbound_id, "direction": "inbound", "body": text, "reason": None, "created_at": now,
+            "channel": channel,
             "audio_file": voice.get("audio_file") or None,
             "stt_provider": voice.get("stt_provider") or None,
             "stt_language": voice.get("stt_language") or None,
@@ -342,21 +361,26 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
         # Log outbound
         bot_now = datetime.now().isoformat()
         cursor = await db.execute(
-            "INSERT INTO messages (patient_id, direction, body, reason, created_at) VALUES (?,?,?,?,?)",
-            (patient_id, "outbound", bot_reply, reason, bot_now)
+            "INSERT INTO messages (patient_id, direction, body, reason, created_at, channel) VALUES (?,?,?,?,?,?)",
+            (patient_id, "outbound", bot_reply, reason, bot_now, channel)
         )
         outbound_id = cursor.lastrowid
         await db.commit()
 
         outbound_msg = {
             "id": outbound_id, "direction": "outbound", "body": bot_reply,
-            "reason": reason, "created_at": bot_now,
+            "reason": reason, "created_at": bot_now, "channel": channel,
             "audio_file": None, "stt_provider": None, "stt_language": None, "stt_latency_ms": None,
         }
         await manager.broadcast(patient_id, {"type": "message", "message": outbound_msg})
 
         # Push updated patient stats
         p = await get_patient_full(patient_id, db)
+
+        # Reply over the transport the patient actually used. The dashboard sees
+        # the message either way via the broadcast above.
+        if channel == "whatsapp":
+            await whatsapp.send_text(p["phone"], bot_reply)
         await manager.broadcast(patient_id, {"type": "patient_updated", "patient": p})
         await manager.broadcast_all({"type": "patient_updated", "patient": p})
 
@@ -420,7 +444,7 @@ async def send_patient_voice_note(
     included. `provider` pins a specific model, which is how we demo the same
     utterance through Sahara vs Whisper side by side.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         cursor = await db.execute("SELECT id FROM patients WHERE id=?", (patient_id,))
         if await cursor.fetchone() is None:
             raise HTTPException(status_code=404, detail="Patient not found")
@@ -432,7 +456,7 @@ async def send_patient_voice_note(
     # Store under a generated name — never the client-supplied filename, and
     # never anything patient-identifying (consent/de-identification promise).
     stored_name = f"p{patient_id}_{uuid.uuid4().hex[:12]}{suffix}"
-    dest = VOICE_DIR / stored_name
+    dest = ensure_voice_dir() / stored_name
     dest.write_bytes(await audio.read())
 
     result = await stt.transcribe(str(dest), language=language, provider=provider)
@@ -471,6 +495,154 @@ async def send_patient_voice_note(
     return payload
 
 
+# ── Routes: WhatsApp Cloud API ────────────────────────────────────────────────
+#
+# The real transport. Same agent logic as the simulator — these handlers resolve
+# the sender to a patient, turn voice notes into text, and hand off to
+# ingest_patient_message(). No conversation logic lives here.
+
+# Meta retries deliveries aggressively; without this a patient gets two replies
+# to one message. Bounded so a long-running process can't grow without limit.
+_seen_wa_messages: dict[str, float] = {}
+_SEEN_LIMIT = 2000
+
+
+def _already_handled(message_id: str) -> bool:
+    if not message_id:
+        return False
+    if message_id in _seen_wa_messages:
+        return True
+    if len(_seen_wa_messages) >= _SEEN_LIMIT:
+        oldest = sorted(_seen_wa_messages, key=_seen_wa_messages.get)[:_SEEN_LIMIT // 2]
+        for k in oldest:
+            _seen_wa_messages.pop(k, None)
+    _seen_wa_messages[message_id] = datetime.now().timestamp()
+    return False
+
+
+async def _patient_by_phone(phone: str) -> Optional[dict]:
+    """Resolve an inbound WhatsApp number to an enrolled patient.
+
+    Compared digits-only: Meta sends E.164 without '+', patients are stored with
+    it. Falls back to a suffix match so a number stored without its country code
+    still resolves.
+    """
+    target = whatsapp.normalize_phone(phone)
+    async with db_store.connect() as db:
+        cursor = await db.execute("SELECT id, name, phone FROM patients")
+        rows = await cursor.fetchall()
+    for pid, name, stored in rows:
+        digits = whatsapp.normalize_phone(stored or "")
+        if not digits:
+            continue
+        if digits == target or digits.endswith(target[-9:]) or target.endswith(digits[-9:]):
+            return {"id": pid, "name": name, "phone": stored}
+    return None
+
+
+@app.get("/webhook/whatsapp")
+async def whatsapp_verify(
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+):
+    """Meta's one-time verification handshake when you save the webhook URL."""
+    try:
+        return PlainTextResponse(str(whatsapp.verify_challenge(
+            hub_mode, hub_verify_token, hub_challenge)))
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Verification token mismatch")
+
+
+@app.post("/webhook/whatsapp")
+async def whatsapp_receive(request: Request):
+    """Inbound WhatsApp message — text or voice note.
+
+    Always returns 200 once the signature checks out. Meta retries anything else,
+    and a retry storm on a parse error is worse than dropping one message.
+    """
+    raw = await request.body()
+    if not whatsapp.verify_signature(raw, request.headers.get("x-hub-signature-256")):
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
+    try:
+        body = json.loads(raw)
+        value = body["entry"][0]["changes"][0]["value"]
+    except Exception:
+        return {"status": "ignored"}
+
+    if "messages" not in value:
+        return {"status": "no_message"}       # delivery receipts, read status, etc.
+
+    message = value["messages"][0]
+    message_id = message.get("id", "")
+    sender = message.get("from", "")
+    msg_type = message.get("type", "")
+
+    if _already_handled(message_id):
+        return {"status": "duplicate_ignored"}
+
+    patient = await _patient_by_phone(sender)
+    if patient is None:
+        # Unknown number: answer helpfully, never silently. Do not auto-enrol —
+        # enrolment is a consented clinical act, not a side effect of texting.
+        await whatsapp.send_text(
+            sender,
+            "Hello! This number isn't registered with the clinic yet. "
+            "Please contact your care team to be enrolled.",
+        )
+        return {"status": "unknown_sender"}
+
+    if msg_type == "text":
+        text = (message.get("text", {}).get("body") or "").strip()
+        if not text:
+            return {"status": "empty"}
+        await ingest_patient_message(patient["id"], text, channel="whatsapp")
+        return {"status": "ok"}
+
+    if msg_type in ("audio", "voice"):
+        media_id = message.get(msg_type, {}).get("id")
+        stored = await whatsapp.download_media(
+            media_id, ensure_voice_dir(), f"p{patient['id']}_{uuid.uuid4().hex[:12]}"
+        ) if media_id else None
+
+        if stored is None:
+            await whatsapp.send_text(
+                sender, "Sorry, I couldn't download that voice note. Please try again."
+            )
+            return {"status": "media_failed"}
+
+        # Language hint: WhatsApp gives us none, so use the deployment default.
+        # Sahara's Ghanaian codes are what make this worth configuring.
+        language = os.getenv("WHATSAPP_STT_LANGUAGE", "en")
+        result = await stt.transcribe(str(stored), language=language)
+
+        if not result.ok:
+            await whatsapp.send_text(
+                sender,
+                "Sorry, I couldn't hear that clearly. Please send it again, or type your message.",
+            )
+            return {"status": "stt_failed", "error": result.error}
+
+        await ingest_patient_message(
+            patient["id"], result.text,
+            voice={
+                "audio_file": stored.name,
+                "stt_provider": result.provider,
+                "stt_language": language,
+                "stt_latency_ms": result.latency_ms,
+            },
+            channel="whatsapp",
+        )
+        return {"status": "ok"}
+
+    await whatsapp.send_text(
+        sender,
+        "I can read text and listen to voice notes. Please send one of those.",
+    )
+    return {"status": "unsupported_type"}
+
+
 @app.get("/api/voice/{filename}")
 async def get_voice_note(filename: str):
     """Serve a stored voice note back for replay in the chat pane."""
@@ -486,7 +658,7 @@ async def get_voice_note(filename: str):
 @app.post("/api/patients/{patient_id}/remind")
 async def send_reminder(patient_id: int):
     """Send the category-specific care reminder (demo trigger)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         reminder = await trigger_care_reminder(patient_id, db)
         now = datetime.now().isoformat()
         cursor = await db.execute(
@@ -503,7 +675,7 @@ async def send_reminder(patient_id: int):
 @app.post("/api/patients/{patient_id}/checkin")
 async def send_checkin(patient_id: int):
     """Send the category-specific check-in prompt."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         prompt = await trigger_checkin(patient_id, db)
         now = datetime.now().isoformat()
         cursor = await db.execute(
@@ -521,7 +693,7 @@ async def send_checkin(patient_id: int):
 
 @app.get("/api/alerts")
 async def get_alerts():
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         cursor = await db.execute(
             """SELECT e.id, e.patient_id, p.name, e.reason, e.risk_level, e.details, e.created_at
                FROM escalations e JOIN patients p ON e.patient_id=p.id
@@ -540,7 +712,7 @@ async def get_alerts():
 
 @app.post("/api/alerts/{alert_id}/resolve")
 async def resolve_alert(alert_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         await db.execute("UPDATE escalations SET resolved=1 WHERE id=?", (alert_id,))
         await db.commit()
         await manager.broadcast_all({"type": "alert_resolved", "alert_id": alert_id})
@@ -551,7 +723,7 @@ async def resolve_alert(alert_id: int):
 
 @app.get("/api/reports/weekly")
 async def weekly_report():
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_store.connect() as db:
         cursor = await db.execute("SELECT id FROM patients WHERE status='active'")
         rows = await cursor.fetchall()
         patients_data = []
@@ -601,8 +773,27 @@ async def websocket_global(websocket: WebSocket):
         manager.disconnect(-1, websocket)
 
 
+# ── Health ────────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    """Liveness check that also reports what's actually wired up — the fastest
+    way to tell whether a tunnel reaches this process and whether WhatsApp and
+    speech are configured, without sending a real message."""
+    return {
+        "status": "ok",
+        "service": "VeloxaCare API",
+        "whatsapp_configured": whatsapp.is_configured(),
+        "stt_providers": stt.configured_providers(),
+        "webhook": "/webhook/whatsapp",
+    }
+
+
 # ── Serve frontend ────────────────────────────────────────────────────────────
 
-frontend_dist = os.path.join(os.path.dirname(__file__), "..", "web", "dist")
+# Mounted last: StaticFiles at "/" swallows every unmatched path, so it must not
+# shadow the API routes above. Only present after `npm run build`; in dev the
+# dashboard is served by Vite on :5173 instead.
+frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_dist):
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")

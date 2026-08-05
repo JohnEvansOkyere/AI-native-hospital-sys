@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api, Patient, Message, Escalation, LanguagePair, SttStatus } from './api/client'
+import { ClinicDashboard } from './components/ClinicDashboard'
 import ReactMarkdown from 'react-markdown'
 import {
   Activity, AlertTriangle, Bell, CheckCircle, ChevronRight,
@@ -16,6 +17,65 @@ const riskColors = {
 }
 
 const riskLabel = { green: 'On Track', amber: 'Watch', red: 'Urgent' }
+
+// ── Live connection ────────────────────────────────────────────────────────
+//
+// Serverless hosts cap a WebSocket's lifetime (5 minutes on Vercel's Hobby
+// plan), so a socket dropping is normal operation, not an error — without
+// reconnection the dashboard silently goes stale mid-demo.
+//
+// A socket is also pinned to one function instance. A WhatsApp message handled
+// by another instance can't reach this one's sockets, so callers pair this with
+// a slow poll: the socket gives instant updates in the common case, the poll
+// guarantees the dashboard converges in the uncommon one.
+function useLiveSocket(path: string, onEvent: (data: any) => void) {
+  const handlerRef = useRef(onEvent)
+  handlerRef.current = onEvent
+
+  useEffect(() => {
+    let ws: WebSocket | null = null
+    let retry: ReturnType<typeof setTimeout> | undefined
+    let attempt = 0
+    let closed = false
+
+    const open = () => {
+      if (closed) return
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+      ws = new WebSocket(`${proto}://${location.host}${path}`)
+
+      ws.onopen = () => { attempt = 0 }
+      ws.onmessage = (e) => {
+        try {
+          handlerRef.current(JSON.parse(e.data))
+        } catch {
+          // A malformed frame must not kill the connection.
+        }
+      }
+      ws.onclose = () => {
+        if (closed) return
+        // Exponential backoff to 15s, so a backend that is genuinely down
+        // isn't hammered while a routine 5-minute cutoff reconnects promptly.
+        const delay = Math.min(1000 * 2 ** attempt++, 15000)
+        retry = setTimeout(open, delay)
+      }
+      ws.onerror = () => ws?.close()
+    }
+
+    open()
+    return () => {
+      closed = true
+      if (retry) clearTimeout(retry)
+      // Detach before closing: onclose would otherwise schedule a reconnect
+      // for a socket this effect is tearing down.
+      if (ws) { ws.onclose = null; ws.close() }
+    }
+  }, [path])
+}
+
+// How often to reconcile with the server when no socket event arrives. Slow
+// enough to be negligible load, fast enough that a missed cross-instance
+// broadcast is invisible in a live demo.
+const POLL_MS = 10000
 
 // Voice: the language hint attached to a voice note. This is a hint to the
 // speech model, not a constraint on the patient — they code-switch however
@@ -123,7 +183,6 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const wsRef = useRef<WebSocket | null>(null)
   // Bumped on every load; lets us ignore stale fetches that resolve out of order
   const loadSeq = useRef(0)
 
@@ -156,21 +215,18 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
     loadMessages()
   }, [loadMessages])
 
+  useLiveSocket(`/ws/${patient.id}`, useCallback((data: any) => {
+    if (data.type === 'message') addMessage(data.message)
+    if (data.type === 'patient_updated') onUpdate()
+  }, [onUpdate, addMessage]))
+
+  // Backstop for the open conversation: if a WhatsApp reply was handled by a
+  // different function instance, its broadcast never reaches this socket. The
+  // refetch de-duplicates by id, so a message already delivered live is a no-op.
   useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/ws/${patient.id}`)
-    wsRef.current = ws
-    ws.onmessage = (e) => {
-      const data = JSON.parse(e.data)
-      if (data.type === 'message') {
-        addMessage(data.message)
-      }
-      if (data.type === 'patient_updated') {
-        onUpdate()
-      }
-    }
-    return () => ws.close()
-  }, [patient.id, onUpdate, addMessage])
+    const id = setInterval(loadMessages, POLL_MS)
+    return () => clearInterval(id)
+  }, [loadMessages])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -847,6 +903,11 @@ export default function App() {
   const [showEnroll, setShowEnroll] = useState(false)
   const [showReport, setShowReport] = useState(false)
   const [loading, setLoading] = useState(true)
+  // 'clinic' is the real product surface; 'demo' is the WhatsApp simulator kept
+  // as a fallback for when the live webhook can't be reached.
+  const [view, setView] = useState<'clinic' | 'demo'>('clinic')
+  // Bumped whenever a message lands, so the open patient timeline refetches.
+  const [refreshKey, setRefreshKey] = useState(0)
 
   const loadData = useCallback(async () => {
     const [ps, as] = await Promise.all([api.getPatients(), api.getAlerts()])
@@ -859,28 +920,35 @@ export default function App() {
   useEffect(() => { loadData() }, [])
 
   // Global WebSocket for cross-patient events
-  useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/ws/-1`)
-    ws.onmessage = (e) => {
-      const data = JSON.parse(e.data)
-      if (data.type === 'patient_updated') {
-        setPatients(prev => prev.map(p => p.id === data.patient.id ? data.patient : p))
-      }
-      if (data.type === 'patient_enrolled') {
-        setPatients(prev => prev.some(p => p.id === data.patient.id)
-          ? prev.map(p => p.id === data.patient.id ? data.patient : p)
-          : [...prev, data.patient])
-      }
-      if (data.type === 'escalation') {
-        setAlerts(prev => [data.escalation, ...prev])
-      }
-      if (data.type === 'alert_resolved') {
-        setAlerts(prev => prev.filter(a => a.id !== data.alert_id))
-      }
+  useLiveSocket('/ws/-1', useCallback((data: any) => {
+    if (data.type === 'patient_updated') {
+      setPatients(prev => prev.map(p => p.id === data.patient.id ? data.patient : p))
     }
-    return () => ws.close()
-  }, [])
+    if (data.type === 'patient_enrolled') {
+      setPatients(prev => prev.some(p => p.id === data.patient.id)
+        ? prev.map(p => p.id === data.patient.id ? data.patient : p)
+        : [...prev, data.patient])
+    }
+    if (data.type === 'escalation') {
+      setAlerts(prev => [data.escalation, ...prev])
+    }
+    if (data.type === 'alert_resolved') {
+      setAlerts(prev => prev.filter(a => a.id !== data.alert_id))
+    }
+    // A message landed on some channel — WhatsApp included. Nudge the open
+    // timeline to refetch so the clinic view stays live.
+    if (data.type === 'message') {
+      setRefreshKey(k => k + 1)
+    }
+  }, []))
+
+  // Backstop for the patient list and the alert queue. Escalations are the
+  // safety-critical ones: a red flag raised on another instance must not sit
+  // invisible on the clinic screen because a broadcast missed this socket.
+  useEffect(() => {
+    const id = setInterval(loadData, POLL_MS)
+    return () => clearInterval(id)
+  }, [loadData])
 
   const selected = patients.find(p => p.id === selectedId) || null
 
@@ -899,7 +967,15 @@ export default function App() {
       })
     }
     api.getAlerts().then(setAlerts)
+    setRefreshKey(k => k + 1)
   }, [selectedId])
+
+  const handleResolve = useCallback(async (id: number) => {
+    await api.resolveAlert(id)
+    setAlerts(prev => prev.filter(a => a.id !== id))
+    // Resolving can change the patient's risk level, so refetch the roster.
+    api.getPatients().then(setPatients)
+  }, [])
 
   if (loading) return (
     <div className="flex items-center justify-center h-screen bg-slate-50">
@@ -957,6 +1033,22 @@ export default function App() {
               {alerts.length} alert{alerts.length !== 1 ? 's' : ''}
             </div>
           )}
+
+          {/* Clinic is the product; Demo is the simulator fallback. */}
+          <div className="flex rounded-xl border border-slate-200 overflow-hidden text-sm">
+            <button onClick={() => setView('clinic')}
+              className={`px-3 py-2 font-medium transition ${
+                view === 'clinic' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              Clinic
+            </button>
+            <button onClick={() => setView('demo')}
+              title="WhatsApp simulator — same backend path, for demos without the live webhook"
+              className={`px-3 py-2 font-medium transition ${
+                view === 'demo' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              Demo
+            </button>
+          </div>
+
           <button onClick={() => setShowReport(true)}
             className="flex items-center gap-2 bg-emerald-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-emerald-700 transition font-medium">
             <FileText size={14} /> Weekly Report
@@ -969,62 +1061,69 @@ export default function App() {
       </header>
 
       {/* Main layout */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left: patient list */}
-        <div className="w-72 flex-shrink-0 bg-white border-r border-slate-100 flex flex-col overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100">
-            <h2 className="font-semibold text-sm text-slate-700 flex items-center gap-2">
-              <User size={14} /> {stats.total} Patients
-            </h2>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {patients.map(p => (
-              <PatientCard key={p.id} patient={p} selected={p.id === selectedId}
-                onClick={() => setSelectedId(p.id)} />
-            ))}
-          </div>
-        </div>
-
-        {/* Center: detail */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 min-w-0">
-          {/* Alerts panel */}
-          {alerts.length > 0 && (
-            <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
-              <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                <AlertTriangle size={14} className="text-red-500" />
-                Active Alerts
-                <span className="ml-auto bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-bold">{alerts.length}</span>
-              </h3>
-              <AlertsPanel alerts={alerts} onResolve={async (id) => {
-                await api.resolveAlert(id)
-                setAlerts(prev => prev.filter(a => a.id !== id))
-              }} />
+      {view === 'clinic' ? (
+        <ClinicDashboard
+          patients={patients}
+          alerts={alerts}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onResolve={handleResolve}
+          refreshKey={refreshKey}
+        />
+      ) : (
+        /* Demo mode: the WhatsApp simulator. Patients are on real WhatsApp, but
+           this runs the identical backend path — keep it as the live fallback if
+           the webhook is unreachable mid-demo. */
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-72 flex-shrink-0 bg-white border-r border-slate-100 flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100">
+              <h2 className="font-semibold text-sm text-slate-700 flex items-center gap-2">
+                <User size={14} /> {stats.total} Patients
+              </h2>
             </div>
-          )}
-          {selected ? (
-            <PatientDetail patient={selected} />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-64 text-slate-300">
-              <MessageCircle size={40} />
-              <p className="mt-2 text-sm">Select a patient</p>
+            <div className="flex-1 overflow-y-auto">
+              {patients.map(p => (
+                <PatientCard key={p.id} patient={p} selected={p.id === selectedId}
+                  onClick={() => setSelectedId(p.id)} />
+              ))}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Right: WhatsApp simulator */}
-        <div className="w-80 flex-shrink-0 p-4 flex flex-col">
-          {selected ? (
-            <WhatsAppChat patient={selected} onUpdate={handlePatientUpdate} />
-          ) : (
-            <div className="flex-1 bg-white rounded-2xl flex items-center justify-center text-slate-300 border border-slate-100">
-              <div className="text-center">
-                <MessageCircle size={32} className="mx-auto" />
-                <p className="text-sm mt-2">Select a patient to chat</p>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 min-w-0">
+            {alerts.length > 0 && (
+              <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+                <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                  <AlertTriangle size={14} className="text-red-500" />
+                  Active Alerts
+                  <span className="ml-auto bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-bold">{alerts.length}</span>
+                </h3>
+                <AlertsPanel alerts={alerts} onResolve={handleResolve} />
               </div>
-            </div>
-          )}
+            )}
+            {selected ? (
+              <PatientDetail patient={selected} />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-64 text-slate-300">
+                <MessageCircle size={40} />
+                <p className="mt-2 text-sm">Select a patient</p>
+              </div>
+            )}
+          </div>
+
+          <div className="w-80 flex-shrink-0 p-4 flex flex-col">
+            {selected ? (
+              <WhatsAppChat patient={selected} onUpdate={handlePatientUpdate} />
+            ) : (
+              <div className="flex-1 bg-white rounded-2xl flex items-center justify-center text-slate-300 border border-slate-100">
+                <div className="text-center">
+                  <MessageCircle size={32} className="mx-auto" />
+                  <p className="text-sm mt-2">Select a patient to chat</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Modals */}
       {showEnroll && (

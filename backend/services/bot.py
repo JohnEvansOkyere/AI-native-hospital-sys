@@ -1,7 +1,7 @@
 import json
 from datetime import date, datetime
 from typing import Optional
-import aiosqlite
+from db import Connection
 
 from services.ai import (
     detect_reason_ai, detect_reason_rule, generate_bot_reply,
@@ -34,7 +34,7 @@ def _format_time(value: str) -> str:
         return value or "not set"
 
 
-async def _build_context(patient_id: int, db: aiosqlite.Connection,
+async def _build_context(patient_id: int, db: Connection,
                          name: str, condition: str, drug_name: str,
                          drug_dosage: str, streak: int) -> tuple[dict, list[dict]]:
     """Gather the patient's real data + recent chat so the assistant can answer
@@ -84,7 +84,7 @@ ESC_REASON_TEXT = {
 
 
 async def _handle_missed_dose(patient_id: int, name: str, message: str,
-                              db: aiosqlite.Connection, now: str, today: str):
+                              db: Connection, now: str, today: str):
     """Single source of truth for a missed/blocked dose: detect the reason, log it,
     and apply the escalation rules. Used by BOTH the reminder-reply flow and free chat,
     so a cost barrier is flagged no matter how the patient phrases it."""
@@ -131,7 +131,7 @@ async def _process_dental_message(
     reminder_time: str,
     current_flow: str,
     message: str,
-    db: aiosqlite.Connection,
+    db: Connection,
     now: str,
     today: str,
 ):
@@ -254,7 +254,7 @@ async def _process_eye_message(
     care_instructions: str,
     current_flow: str,
     message: str,
-    db: aiosqlite.Connection,
+    db: Connection,
     now: str,
     today: str,
 ):
@@ -318,7 +318,7 @@ async def _process_general_message(
     care_instructions: str,
     current_flow: str,
     message: str,
-    db: aiosqlite.Connection,
+    db: Connection,
     now: str,
     today: str,
 ):
@@ -355,7 +355,7 @@ async def _process_general_message(
     return bot_reply, None, False
 
 
-async def process_message(patient_id: int, message: str, db: aiosqlite.Connection):
+async def process_message(patient_id: int, message: str, db: Connection):
     """
     Core bot logic. Returns (bot_reply, reason, escalation_created).
     Also logs the inbound message, bot reply, adherence, checkin, escalation.
@@ -610,7 +610,7 @@ async def process_message(patient_id: int, message: str, db: aiosqlite.Connectio
     return bot_reply or "Thank you — your care team has been updated.", reason, escalation_created
 
 
-async def trigger_care_reminder(patient_id: int, db: aiosqlite.Connection) -> str:
+async def trigger_care_reminder(patient_id: int, db: Connection) -> str:
     """Trigger the category-specific care reminder used by the demo controls."""
     cursor = await db.execute(
         "SELECT name, drug_name, drug_dosage, category, service_type, care_instructions FROM patients WHERE id=?",
@@ -647,11 +647,11 @@ async def trigger_care_reminder(patient_id: int, db: aiosqlite.Connection) -> st
     return f"Good morning {first}! ☀️ Time for your {drug} ({dosage}). Reply YES when done, NO if you missed it."
 
 
-async def trigger_medication_reminder(patient_id: int, db: aiosqlite.Connection) -> str:
+async def trigger_medication_reminder(patient_id: int, db: Connection) -> str:
     return await trigger_care_reminder(patient_id, db)
 
 
-async def trigger_checkin(patient_id: int, db: aiosqlite.Connection) -> str:
+async def trigger_checkin(patient_id: int, db: Connection) -> str:
     cursor = await db.execute(
         "SELECT name, category, service_type FROM patients WHERE id=?",
         (patient_id,),
@@ -688,5 +688,5 @@ async def trigger_checkin(patient_id: int, db: aiosqlite.Connection) -> str:
     return f"Weekly check-in, {first}! 📋 What was your blood pressure reading this week? (e.g. 128/82)"
 
 
-async def trigger_bp_checkin(patient_id: int, db: aiosqlite.Connection) -> str:
+async def trigger_bp_checkin(patient_id: int, db: Connection) -> str:
     return await trigger_checkin(patient_id, db)

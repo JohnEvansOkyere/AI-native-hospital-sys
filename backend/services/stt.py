@@ -135,6 +135,27 @@ class OpenAIWhisperSTT:
         return resp.text
 
 
+class SaharaEnglishSTT(SaharaSTT):
+    """Sahara pinned to the English model regardless of the set's language.
+
+    Exists because of a real, dated finding. Intron's monolingual `tw` model
+    returns an empty transcript on Twi–English code-switched speech — the English
+    half (numerals, drug names) is not something it emits — while the same audio
+    under the `en` hint yields usable text and correct BP extraction. The
+    Akan–English *code-switch* pair, which is what these utterances actually need,
+    had not shipped at time of testing (Intron: rolling out the week of 10 Aug 2026).
+
+    Benchmarking both configurations is the point: the choice of language hint
+    moves the result more than the choice of model does, and a report that showed
+    only one configuration would be misleading either way.
+    """
+
+    name = "sahara_en"
+
+    def transcribe(self, audio_path: str, language: str = "en") -> str:
+        return super().transcribe(audio_path, language="en")
+
+
 class CartesiaSTT:
     """Cartesia Ink batch STT — https://docs.cartesia.ai/api-reference/stt/transcribe
 
@@ -200,6 +221,7 @@ class LocalWhisperSTT:
 
 REGISTRY = {
     "sahara": SaharaSTT,
+    "sahara_en": SaharaEnglishSTT,
     "openai": OpenAIWhisperSTT,
     "cartesia": CartesiaSTT,
     "local": LocalWhisperSTT,

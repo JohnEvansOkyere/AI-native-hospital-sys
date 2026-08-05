@@ -1,9 +1,90 @@
 import aiosqlite
 import json
+import os
 from datetime import datetime, timedelta, date
+from typing import Union
 import random
 
-DB_PATH = "veloxacare.db"
+# Local dev writes a file next to the app. On a serverless host the bundle is
+# read-only, so fall back to the one writable location — but see connect():
+# /tmp is per-instance and wiped on cold start, so it is a demo path only.
+# Anything resembling a real deployment sets TURSO_DATABASE_URL.
+DB_PATH = os.getenv("DB_PATH") or ("/tmp/veloxacare.db" if os.getenv("VERCEL") else "veloxacare.db")
+
+
+def turso_configured() -> bool:
+    return bool(os.getenv("TURSO_DATABASE_URL"))
+
+
+def connect():
+    """Open a database connection.
+
+    Returns an async context manager exposing the aiosqlite surface this app
+    uses (execute / fetchone / fetchall / lastrowid / commit), backed either by
+    a local SQLite file or by Turso over HTTP. Every call site uses this rather
+    than aiosqlite directly, so the storage swap stays in one place.
+    """
+    if turso_configured():
+        return _TursoConnection()
+    return aiosqlite.connect(DB_PATH)
+
+
+# Both backends satisfy the same small interface, so anything that receives an
+# open connection is annotated with this rather than with a concrete class.
+Connection = Union[aiosqlite.Connection, "_TursoConnection"]
+
+
+class _TursoCursor:
+    """Mimics the slice of aiosqlite.Cursor this codebase touches."""
+
+    def __init__(self, result_set):
+        self._rows = [tuple(row) for row in result_set.rows]
+        self.lastrowid = result_set.last_insert_rowid
+
+    async def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    async def fetchall(self):
+        return self._rows
+
+
+class _TursoConnection:
+    """aiosqlite-shaped adapter over libsql (Turso).
+
+    Turso speaks SQLite dialect, so every query in this app is unchanged. The
+    only real differences are that statements autocommit (commit() is a no-op)
+    and that multi-statement scripts must be sent one statement at a time.
+    """
+
+    def __init__(self):
+        self._client = None
+
+    async def __aenter__(self):
+        import libsql_client
+
+        self._client = libsql_client.create_client(
+            url=os.getenv("TURSO_DATABASE_URL"),
+            auth_token=os.getenv("TURSO_AUTH_TOKEN"),
+        )
+        return self
+
+    async def __aexit__(self, *exc):
+        if self._client is not None:
+            await self._client.close()
+        return False
+
+    async def execute(self, sql: str, params=()):
+        return _TursoCursor(await self._client.execute(sql, list(params)))
+
+    async def executescript(self, script: str):
+        # libsql has no executescript; CREATE TABLE IF NOT EXISTS statements are
+        # idempotent so replaying them one by one is equivalent.
+        for statement in filter(None, (s.strip() for s in script.split(";"))):
+            await self._client.execute(statement)
+
+    async def commit(self):
+        """No-op — libsql autocommits each statement."""
+        return None
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS patients (
@@ -33,6 +114,9 @@ CREATE TABLE IF NOT EXISTS messages (
     body TEXT NOT NULL,
     reason TEXT,
     created_at TEXT NOT NULL,
+    -- Which transport this message arrived on / went out over.
+    -- 'simulator' is the built-in WhatsApp pane; real channels are named directly.
+    channel TEXT DEFAULT 'simulator',
     -- Voice notes: body holds the transcript, these record how we got it.
     audio_file TEXT DEFAULT '',
     stt_provider TEXT DEFAULT '',
@@ -304,11 +388,11 @@ SEED_ESCALATIONS = [
 
 
 async def get_db():
-    return await aiosqlite.connect(DB_PATH)
+    return await connect()
 
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.executescript(SCHEMA)
 
         # Keep existing demo databases usable when the category-aware schema is
@@ -334,6 +418,7 @@ async def init_db():
             row[1] for row in await (await db.execute("PRAGMA table_info(messages)")).fetchall()
         }
         new_message_columns = {
+            "channel": "TEXT DEFAULT 'simulator'",
             "audio_file": "TEXT DEFAULT ''",
             "stt_provider": "TEXT DEFAULT ''",
             "stt_language": "TEXT DEFAULT ''",

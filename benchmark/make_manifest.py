@@ -35,7 +35,8 @@ SCENARIOS_CSV = BENCH / "recording" / "scenarios.csv"
 
 AUDIO_EXT = {".m4a", ".wav", ".mp3", ".ogg", ".oga", ".webm", ".flac", ".mp4"}
 NOISE = {"quiet", "noisy"}
-FIELDS = ["audio_file", "scenario_id", "speaker_id", "noise_condition", "transcript_override"]
+FIELDS = ["audio_file", "scenario_id", "speaker_id", "noise_condition",
+          "transcript_override", "bp_override"]
 
 
 def canonical_stem(path: Path, scenarios: dict) -> tuple[str | None, list[str]]:
@@ -83,11 +84,18 @@ def canonical_stem(path: Path, scenarios: dict) -> tuple[str | None, list[str]]:
     return f"{speaker}_{scenario}_{noise}", notes
 
 
-# Fast conversational speech tops out around 2.5 words/sec. A file shorter than
-# word_count / this is almost certainly clipped — the speaker stopped recording
-# before finishing the line. Catching that during the session is the difference
-# between re-recording one line and losing a speaker.
-MAX_WORDS_PER_SEC = 2.5
+# Upper bound on plausible speaking rate, used to spot clipped recordings.
+#
+# Calibrated against real sessions: an English control set read at 1.5-1.9
+# words/sec, while the same speaker delivered Twi and Pidgin at 2.5-2.9 w/s —
+# people read their own languages faster, and code-switched lines pack more
+# syllables into fewer whitespace-delimited "words". A threshold tuned on English
+# alone produces false positives on exactly the sets that matter most.
+#
+# 3.5 w/s is faster than natural conversational delivery, so anything below the
+# implied duration is worth a listen. This is ADVISORY, not a verdict: confirm by
+# playing the file or checking that a transcript reaches the final word.
+MAX_WORDS_PER_SEC = 3.5
 
 
 def duration_seconds(path: Path) -> float | None:
@@ -112,15 +120,24 @@ def load_scenarios() -> dict:
 
 
 def load_existing_overrides() -> dict:
-    """Keep hand-transcriptions across re-runs, keyed by audio filename."""
+    """Keep hand-corrections across re-runs, keyed by audio filename.
+
+    Both overrides exist for the same reason: the script is what we asked for,
+    the audio is what was said. When a speaker deviates — and they do, especially
+    on numbers — the recording must be scored against what is actually on it, or
+    every model is charged for our transcription error.
+    """
     if not MANIFEST.is_file():
         return {}
+    out = {}
     with open(MANIFEST, newline="", encoding="utf-8") as f:
-        return {
-            r["audio_file"]: r.get("transcript_override", "")
-            for r in csv.DictReader(f)
-            if r.get("transcript_override", "").strip()
-        }
+        for r in csv.DictReader(f):
+            kept = {k: (r.get(k) or "").strip()
+                    for k in ("transcript_override", "bp_override")
+                    if (r.get(k) or "").strip()}
+            if kept:
+                out[r["audio_file"]] = kept
+    return out
 
 
 def main():
@@ -159,7 +176,7 @@ def main():
         if noise not in NOISE:
             problems.append(f"{p.name}: noise must be one of {sorted(NOISE)}, got '{noise}'")
             continue
-        if not scenarios[scenario]["script"] and not overrides.get(p.name):
+        if not scenarios[scenario]["script"] and not overrides.get(p.name, {}).get("transcript_override"):
             problems.append(f"{p.name}: scenario {scenario} has no script "
                             "(spontaneous set) — needs a transcript_override "
                             "before it can be scored")
@@ -175,7 +192,7 @@ def main():
                 if secs < floor:
                     clipped.append(
                         f"{p.name}: {secs:.1f}s for a {words}-word line "
-                        f"(expect {floor:.1f}s+) — probably cut off, re-record"
+                        f"({words/secs:.1f} words/sec) — verify it isn't cut off"
                     )
 
         canonical_name = stem + p.suffix.lower()
@@ -189,7 +206,8 @@ def main():
             "scenario_id": scenario,
             "speaker_id": speaker,
             "noise_condition": noise,
-            "transcript_override": overrides.get(p.name, ""),
+            "transcript_override": overrides.get(p.name, {}).get("transcript_override", ""),
+            "bp_override": overrides.get(p.name, {}).get("bp_override", ""),
         })
 
     if renames:
@@ -220,10 +238,13 @@ def main():
               "      the code-switch penalty — it's the baseline everything is measured against.")
 
     if clipped:
-        print(f"\n  ⚠️  {len(clipped)} recording(s) look CLIPPED — re-record these:")
+        print(f"\n  ⚠️  {len(clipped)} recording(s) are unusually short for their script:")
         for c in clipped:
             print(f"      - {c}")
-        print("      Keep recording ~1s after the last word before hitting stop.")
+        print("      ADVISORY, not a verdict. Play each one, or check that a")
+        print("      transcript reaches the final word of the script. Code-switched")
+        print("      lines are read faster than English, so this check is noisier")
+        print("      on the T and P sets than on the E control.")
 
     if problems:
         print(f"\n{len(problems)} problem(s):")

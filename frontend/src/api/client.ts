@@ -33,6 +33,8 @@ export interface Message {
   body: string
   reason: string | null
   created_at: string
+  /** Transport it arrived on / went out over: simulator | whatsapp | sms | ussd. */
+  channel?: string | null
   // Voice notes only: body holds the transcript, these record how we heard it.
   audio_file?: string | null
   stt_provider?: string | null

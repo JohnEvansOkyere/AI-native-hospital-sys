@@ -54,23 +54,31 @@ Concretely —
 - **Frontend:** React + Vite + TypeScript + Tailwind, in [frontend/](frontend/)
 - **Realtime:** native WebSockets (`/ws/{patient_id}` and `/ws/-1` global), so the
   dashboard and the WhatsApp chat update live as messages flow.
+- **Storage:** SQLite locally; **Turso (libSQL)** when `TURSO_DATABASE_URL` is set.
+  Same SQL either way — see `db.connect()`.
+- **Deployment:** one Vercel project, two services (see [vercel.json](vercel.json)
+  and [docs/DEPLOY.md](docs/DEPLOY.md)).
 
 ## Repository layout
 
 ```
+vercel.json          Two-service deployment: routes /api, /webhook, /ws → backend
 backend/             FastAPI service
   main.py              App, all routes, WebSocket manager
-  db.py                SQLite schema + seed data (patients, history, escalations)
+  db.py                Schema + seed data, and the SQLite/Turso connection layer
+  requirements.txt        Deployed deps — no faster-whisper (too large for serverless)
+  requirements-local.txt  The above plus faster-whisper, for local runs + benchmark
   services/
     ai.py              Groq integration + rule-based fallbacks (reason, BP risk, reports)
     bot.py             Core conversation logic — the "brain"
     stt.py             Speech-to-text provider layer (shared with the benchmark)
+    whatsapp.py        Meta Cloud API transport (send, media download, signatures)
   voice_notes/         Received voice notes (git-ignored)
 frontend/            React + Vite dashboard and WhatsApp simulator
   src/App.tsx          Entire UI — single file, deliberately
   src/api/client.ts    Typed API client + TS interfaces
 benchmark/           Code-switch STT benchmark — see benchmark/README.md
-docs/                ARCHITECTURE, DEMO, CHALLENGE
+docs/                ARCHITECTURE, DEMO, CHALLENGE, DEPLOY, WHATSAPP-SETUP
   business/            Pitch, GTM, concept docs, client folders
 start.sh             One-command launcher (venv + uvicorn + vite)
 ```
@@ -81,6 +89,11 @@ start.sh             One-command launcher (venv + uvicorn + vite)
 cp .env.example .env      # add GROQ_API_KEY (optional — see below)
 ./start.sh                # → dashboard at localhost:5173, API at localhost:8000
 ```
+
+To deploy, see [docs/DEPLOY.md](docs/DEPLOY.md). One Vercel project builds both
+services; the only variable that changes behaviour rather than degrading is
+`TURSO_DATABASE_URL`, without which a deployed instance loses all state on every
+cold start.
 
 The system **works with or without API keys.** Without them, `ai.py` falls back to
 rule-based keyword reason-detection and a templated weekly report, and `stt.py` falls
@@ -95,9 +108,13 @@ These are the things that would force a rewrite if broken.
 - **`stt.py` knows nothing about patients, messages or channels.** It takes audio and
   returns text plus provenance. The same layer must later serve clinician dictation
   and triage, so never leak chat or WhatsApp concepts into it.
-- **`ingest_patient_message()` in `backend/main.py` is the single inbound choke point.** Text
-  and voice already converge there. Any new channel (WhatsApp, SMS, USSD, voice call)
-  calls *that function* — never a parallel path.
+- **`ingest_patient_message()` in `backend/main.py` is the single inbound choke point.** The
+  simulator and the WhatsApp webhook both call it, text and voice alike, and every
+  message records the `channel` it arrived on. Any new transport (SMS, USSD, voice
+  call) calls *that function* — never a parallel path.
+- **`services/whatsapp.py` is transport only.** It sends, downloads media and checks
+  signatures. It must never learn about adherence, escalation or patients beyond a
+  phone number.
 - **The benchmark imports the app's STT code**, it does not copy it
   (`benchmark/stt_providers.py` re-exports `backend/services/stt.py`). That is what lets
   the benchmark claim it measures the real product. Don't fork it.
@@ -106,13 +123,24 @@ These are the things that would force a rewrite if broken.
   audit on every AI action; extend this, don't bypass it.
 - **Offline capability is a product property, not a benchmark curiosity.** Local
   faster-whisper runs with no key and no network. Keep it in the provider chain.
+  It is not installed on Vercel (size), so **offline benchmark results must be
+  produced locally** — never cite a deployed run for the offline claim.
+- **Nothing may assume a writable disk or a warm process.** The deployed target is
+  serverless: the filesystem is read-only apart from `/tmp`, instances come and go,
+  and module-level side effects run on every cold start. Never write files at
+  import time, never cache state in a module global and expect another request to
+  see it, and never make the demo depend on a file written by an earlier request.
+- **All database access goes through `db.connect()`**, never `aiosqlite` directly.
+  That one function is what lets the same SQL run against a local file and against
+  Turso in production.
 
 ## Key conventions & gotchas
 
 - **The DB seeds itself once.** `init_db()` only seeds if the `patients` table is
-  empty. To reset the demo, delete `backend/veloxacare.db` and restart. Schema changes
-  need an additive `ALTER TABLE` migration guarded by `PRAGMA table_info` — follow the
-  existing pattern in `db.py` so live demo databases keep working.
+  empty. To reset the demo, delete `backend/veloxacare.db` and restart (deployed:
+  drop the tables via `turso db shell`). Schema changes need an additive
+  `ALTER TABLE` migration guarded by `PRAGMA table_info` — follow the existing
+  pattern in `db.py` so live demo databases keep working.
 - **Seed data is date-relative.** `db.py` computes adherence logs and messages
   relative to `date.today()`, so the demo always looks "current" no matter when it
   runs. Preserve this when editing seed data.
@@ -158,7 +186,7 @@ Full detail in [benchmark/README.md](benchmark/README.md). The load-bearing bits
 
 ## When making changes
 
-- Type-check the frontend with `cd web && npx tsc --noEmit` before declaring done.
+- Type-check the frontend with `cd frontend && npx tsc --noEmit` before declaring done.
 - Smoke-test the backend by starting uvicorn and hitting `/api/patients`,
   `/api/patients/{id}/messages`, `/api/alerts`, and `/api/stt/status`.
 - After touching scenarios or scoring, run `python sync_scenarios.py --check`.
