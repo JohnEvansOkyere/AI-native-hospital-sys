@@ -51,6 +51,8 @@ Concretely —
   Override with `GROQ_FAST_MODEL` / `GROQ_REPORT_MODEL`.
 - **Speech-to-text:** [backend/services/stt.py](backend/services/stt.py) — Intron Sahara,
   Cartesia Ink, OpenAI `whisper-1`, local faster-whisper.
+- **Text-to-speech:** [backend/services/tts.py](backend/services/tts.py) — Intron TTS,
+  Cartesia Sonic. A voice note in gets a voice note back.
 - **Frontend:** React + Vite + TypeScript + Tailwind, in [frontend/](frontend/)
 - **Realtime:** native WebSockets (`/ws/{patient_id}` and `/ws/-1` global), so the
   dashboard and the WhatsApp chat update live as messages flow.
@@ -72,6 +74,7 @@ backend/             FastAPI service
     ai.py              Groq integration + rule-based fallbacks (reason, BP risk, reports)
     bot.py             Core conversation logic — the "brain"
     stt.py             Speech-to-text provider layer (shared with the benchmark)
+    tts.py             Text-to-speech provider layer (spoken replies)
     whatsapp.py        Meta Cloud API transport (send, media download, signatures)
   voice_notes/         Received voice notes (git-ignored)
 frontend/            React + Vite dashboard and WhatsApp simulator
@@ -115,6 +118,12 @@ These are the things that would force a rewrite if broken.
 - **`services/whatsapp.py` is transport only.** It sends, downloads media and checks
   signatures. It must never learn about adherence, escalation or patients beyond a
   phone number.
+- **`tts.py` is the mirror of `stt.py`, and just as channel-blind.** It takes text
+  and returns audio bytes plus provenance. Callers declare which containers they
+  can play via `accept`, the way an HTTP client sends Accept — that is how the
+  browser pane and WhatsApp get different formats out of one function without this
+  layer ever learning what a channel is. Clinician callbacks and IVR will want the
+  same function untangled from chat.
 - **The benchmark imports the app's STT code**, it does not copy it
   (`benchmark/stt_providers.py` re-exports `backend/services/stt.py`). That is what lets
   the benchmark claim it measures the real product. Don't fork it.
@@ -157,6 +166,15 @@ These are the things that would force a rewrite if broken.
   This is a deliberate medical-safety and legal boundary — do not let the LLM diagnose
   or decide escalation. If asked to add "AI triage," push back and keep the human in
   the loop.
+- **The agent answers in the modality it was addressed in.** `TTS_MODE=mirror`
+  (the default) speaks only when the patient sent voice. Patients who send voice
+  notes are disproportionately those who read with difficulty, so a text-only
+  reply throws away the accessibility the voice channel just bought. A typed
+  message getting no audio is the design, not a broken key.
+- **Intron TTS has no Twi, Akan or Ga voice** — only Pidgin, plus ten non-Ghanaian
+  English accents. Note the asymmetry with STT, where Sahara *does* have tw/ak/gaa:
+  recognition of Ghanaian languages is ahead of synthesis of them. Say that plainly
+  rather than implying a Twi voice exists.
 - **The WhatsApp pane is a simulator** that shares the exact same backend code path as
   real WhatsApp would. The Meta Cloud API adapter is the planned swap-in (see
   ARCHITECTURE.md) — keep `bot.process_message()` transport-agnostic so the same logic

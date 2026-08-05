@@ -221,10 +221,16 @@ CREATE TABLE IF NOT EXISTS messages (
     -- 'simulator' is the built-in WhatsApp pane; real channels are named directly.
     channel TEXT DEFAULT 'simulator',
     -- Voice notes: body holds the transcript, these record how we got it.
+    -- On an outbound message audio_file is the spoken reply instead, and the
+    -- tts_* columns say which voice said it. One column either way: audio_file
+    -- is always "the audio for this message", whichever direction it travelled.
     audio_file TEXT DEFAULT '',
     stt_provider TEXT DEFAULT '',
     stt_language TEXT DEFAULT '',
-    stt_latency_ms INTEGER DEFAULT 0
+    stt_latency_ms INTEGER DEFAULT 0,
+    tts_provider TEXT DEFAULT '',
+    tts_voice TEXT DEFAULT '',
+    tts_latency_ms INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS adherence_logs (
@@ -530,6 +536,9 @@ async def init_db():
             "stt_provider": "TEXT DEFAULT ''",
             "stt_language": "TEXT DEFAULT ''",
             "stt_latency_ms": "INTEGER DEFAULT 0",
+            "tts_provider": "TEXT DEFAULT ''",
+            "tts_voice": "TEXT DEFAULT ''",
+            "tts_latency_ms": "INTEGER DEFAULT 0",
         }
         for column, definition in new_message_columns.items():
             if column not in existing_message_columns:

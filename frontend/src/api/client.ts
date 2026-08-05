@@ -36,11 +36,16 @@ export interface Message {
   created_at: string
   /** Transport it arrived on / went out over: simulator | whatsapp | sms | ussd. */
   channel?: string | null
-  // Voice notes only: body holds the transcript, these record how we heard it.
+  /** The audio for this message, whichever way it travelled: the patient's
+   *  voice note on an inbound message, the agent's spoken reply on an outbound
+   *  one. The stt_* fields describe the first case, the tts_* fields the second. */
   audio_file?: string | null
   stt_provider?: string | null
   stt_language?: string | null
   stt_latency_ms?: number | null
+  tts_provider?: string | null
+  tts_voice?: string | null
+  tts_latency_ms?: number | null
 }
 
 /** Benchmark language_pair codes — a hint to the model, not a constraint on
@@ -54,6 +59,16 @@ export interface SttStatus {
   /** Providers configured but failing in practice, mapped to the reason. */
   degraded?: Record<string, string>
   languages: Record<string, string>
+}
+
+export interface TtsStatus {
+  configured: string[]
+  pinned: string | null
+  active: string | null
+  degraded?: Record<string, string>
+  /** mirror = speak only when the patient spoke; always; off. */
+  mode: 'mirror' | 'always' | 'off'
+  enabled: boolean
 }
 
 export interface Transcription {
@@ -168,6 +183,11 @@ export const api = {
 
   async getSttStatus(): Promise<SttStatus> {
     const r = await fetch(`${BASE}/stt/status`)
+    return r.json()
+  },
+
+  async getTtsStatus(): Promise<TtsStatus> {
+    const r = await fetch(`${BASE}/tts/status`)
     return r.json()
   },
 
