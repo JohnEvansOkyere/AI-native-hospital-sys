@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -75,9 +76,31 @@ manager = ConnectionManager()
 
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
+# Set when startup schema/seed fails, and surfaced by /health. Kept as a string
+# rather than re-raising because a database that can't be reached must not take
+# the whole service down with it.
+DB_ERROR: str | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    """Prepare the database, but never let a bad one prevent the app booting.
+
+    An exception here kills the ASGI startup, so on a serverless host *every*
+    route then fails with an opaque platform error — including /health, the one
+    endpoint you need in order to diagnose it. Misconfigured storage is exactly
+    the case where the service must stay up and say so.
+    """
+    global DB_ERROR
+    try:
+        await init_db()
+        DB_ERROR = None
+    except Exception as e:
+        DB_ERROR = f"{type(e).__name__}: {e}"
+        logging.getLogger(__name__).error(
+            "Database init failed — service is up but has no data. "
+            "Check TURSO_DATABASE_URL / TURSO_AUTH_TOKEN. %s", DB_ERROR
+        )
     yield
 
 
@@ -781,11 +804,15 @@ async def health():
     way to tell whether a tunnel reaches this process and whether WhatsApp and
     speech are configured, without sending a real message."""
     return {
-        "status": "ok",
+        "status": "degraded" if DB_ERROR else "ok",
         "service": "VeloxaCare API",
         "whatsapp_configured": whatsapp.is_configured(),
         "stt_providers": stt.configured_providers(),
         "webhook": "/webhook/whatsapp",
+        # Which store is in use, and why it isn't working if it isn't. Without
+        # this a storage misconfiguration is invisible until a query fails.
+        "database": "turso" if db_store.turso_configured() else f"sqlite:{DB_PATH}",
+        "database_error": DB_ERROR,
     }
 
 
