@@ -30,6 +30,10 @@ benchmark/manifest.csv
 benchmark/audio/*
 !benchmark/audio/.gitkeep
 
+# LibreOffice writes these beside any spreadsheet it has open. One reached a
+# commit already; opening summary.csv to read results shouldn't dirty the tree.
+.~lock.*#
+
 # ── OS / editor ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

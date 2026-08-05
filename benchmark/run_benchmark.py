@@ -234,21 +234,31 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
-    # ---- summary: provider × language_pair, plus provider overall
+    # ---- summary, sliced two ways.
+    #
+    # Language and noise are separate questions: "which model copes with
+    # code-switching" and "which model survives a roadside". Crossing them would
+    # split an already small set into cells of two or three recordings, so each
+    # dimension is aggregated over the other and marked ALL on the axis it
+    # ignores. The `slice` column says which question a row answers.
     groups = defaultdict(list)
     for r in rows:
-        groups[(r["provider"], r["language_pair"])].append(r)
-        groups[(r["provider"], "ALL")].append(r)
+        groups[("lang", r["provider"], r["language_pair"])].append(r)
+        groups[("lang", r["provider"], "ALL")].append(r)
+        if r["noise_condition"]:
+            groups[("noise", r["provider"], r["noise_condition"])].append(r)
 
     def rate(rs, key):
         vals = [r[key] for r in rs if r[key] != ""]
         return round(sum(vals) / len(vals), 3) if vals else ""
 
     summary = []
-    for (provider, lang), rs in sorted(groups.items()):
+    for (slice_, provider, value), rs in sorted(groups.items()):
         summary.append({
+            "slice": slice_,
             "provider": provider,
-            "language_pair": lang,
+            "language_pair": value if slice_ == "lang" else "ALL",
+            "noise_condition": value if slice_ == "noise" else "ALL",
             "n": len(rs),
             "mean_wer": round(sum(r["wer"] for r in rs) / len(rs), 3),
             "bp_accuracy": rate(rs, "bp_correct"),
@@ -262,15 +272,38 @@ def main():
         writer.writeheader()
         writer.writerows(summary)
 
-    print(f"\n{'provider':<24}{'lang':<8}{'n':>4}{'WER':>8}{'BP':>8}{'escal':>8}{'intent':>8}{'ms':>9}")
-    for s in summary:
-        print(f"{s['provider']:<24}{s['language_pair']:<8}{s['n']:>4}"
-              f"{s['mean_wer']:>8}{s['bp_accuracy']:>8}{s['escalation_accuracy']:>8}"
-              f"{s['intent_accuracy']:>8}{s['median_latency_ms']:>9}")
+    def print_table(title, header, slice_, key):
+        rs = [s for s in summary if s["slice"] == slice_]
+        if not rs:
+            return
+        print(f"\n{title}")
+        print(f"{'provider':<24}{header:<8}{'n':>4}{'WER':>8}{'BP':>8}"
+              f"{'escal':>8}{'intent':>8}{'ms':>9}")
+        for s in rs:
+            print(f"{s['provider']:<24}{s[key]:<8}{s['n']:>4}"
+                  f"{s['mean_wer']:>8}{s['bp_accuracy']:>8}{s['escalation_accuracy']:>8}"
+                  f"{s['intent_accuracy']:>8}{s['median_latency_ms']:>9}")
+
+    print_table("By language pair:", "lang", "lang", "language_pair")
+    print_table("By noise condition:", "noise", "noise", "noise_condition")
+
+    # Noise robustness: how much each model degrades from a quiet room to real
+    # ambient noise. The deployed product only ever sees the second condition,
+    # so a model that wins on quiet audio and collapses on noisy audio is the
+    # wrong choice however good its headline number looks.
+    print("\nNoise penalty (mean WER, noisy minus quiet):")
+    for provider in sorted({r["provider"] for r in rows}):
+        quiet = [r["wer"] for r in rows
+                 if r["provider"] == provider and r["noise_condition"] == "quiet"]
+        noisy = [r["wer"] for r in rows
+                 if r["provider"] == provider and r["noise_condition"] == "noisy"]
+        if quiet and noisy:
+            delta = sum(noisy) / len(noisy) - sum(quiet) / len(quiet)
+            print(f"  {provider}: {delta:+.3f}   (quiet n={len(quiet)}, noisy n={len(noisy)})")
 
     # code-switch penalty: WER degradation vs English control
     print("\nCode-switch penalty (mean WER, code-switched minus English control):")
-    for provider in {r["provider"] for r in rows}:
+    for provider in sorted({r["provider"] for r in rows}):
         en = [r["wer"] for r in rows if r["provider"] == provider and r["language_pair"] == "en"]
         cs = [r["wer"] for r in rows if r["provider"] == provider and r["language_pair"] != "en"]
         if en and cs:
