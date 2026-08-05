@@ -96,9 +96,16 @@ def _from_value(value):
 class _TursoCursor:
     """Mimics the slice of aiosqlite.Cursor this codebase touches."""
 
-    def __init__(self, rows, lastrowid):
+    def __init__(self, rows, lastrowid, columns=None):
         self._rows = rows
         self.lastrowid = lastrowid
+        # aiosqlite exposes DB-API cursor.description. get_patient_full() uses
+        # it to turn SELECT * into a named record, so the Turso adapter must do
+        # the same rather than returning an anonymous tuple list.
+        self.description = [
+            (column.get("name", ""), None, None, None, None, None, None)
+            for column in (columns or [])
+        ]
 
     async def fetchone(self):
         return self._rows[0] if self._rows else None
@@ -167,7 +174,11 @@ class _TursoConnection:
             for row in result.get("rows", [])
         ]
         rowid = result.get("last_insert_rowid")
-        return _TursoCursor(rows, int(rowid) if rowid is not None else None)
+        return _TursoCursor(
+            rows,
+            int(rowid) if rowid is not None else None,
+            result.get("cols", []),
+        )
 
     async def executescript(self, script: str):
         statements = [{"sql": s, "args": []} for s in split_sql(script)]
@@ -247,6 +258,10 @@ CREATE TABLE IF NOT EXISTS escalations (
     risk_level TEXT NOT NULL,
     details TEXT NOT NULL,
     resolved INTEGER DEFAULT 0,
+    resolution_code TEXT DEFAULT '',
+    resolution_note TEXT DEFAULT '',
+    resolved_by TEXT DEFAULT '',
+    resolved_at TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -519,6 +534,22 @@ async def init_db():
         for column, definition in new_message_columns.items():
             if column not in existing_message_columns:
                 await db.execute(f"ALTER TABLE messages ADD COLUMN {column} {definition}")
+
+        # An escalation is only useful when the care team can record what was
+        # done. These fields close the audit loop while keeping old demo and
+        # production databases intact through additive migrations.
+        existing_escalation_columns = {
+            row[1] for row in await (await db.execute("PRAGMA table_info(escalations)")).fetchall()
+        }
+        new_escalation_columns = {
+            "resolution_code": "TEXT DEFAULT ''",
+            "resolution_note": "TEXT DEFAULT ''",
+            "resolved_by": "TEXT DEFAULT ''",
+            "resolved_at": "TEXT",
+        }
+        for column, definition in new_escalation_columns.items():
+            if column not in existing_escalation_columns:
+                await db.execute(f"ALTER TABLE escalations ADD COLUMN {column} {definition}")
         await db.commit()
 
         cursor = await db.execute("SELECT COUNT(*) FROM patients")
