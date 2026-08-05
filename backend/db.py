@@ -59,12 +59,29 @@ class _TursoConnection:
     def __init__(self):
         self._client = None
 
+    @staticmethod
+    def _http_url(url: str) -> str:
+        """Force the HTTP transport.
+
+        libsql_client maps a `libsql://` URL onto its WebSocket transport, which
+        current Turso instances reject at the handshake with HTTP 400. The
+        supported path is Hrana over HTTP at /v2/pipeline, which the client uses
+        for `https://` URLs. Turso hands you a `libsql://` URL, so normalise it
+        rather than making every deployment remember to rewrite the scheme.
+        """
+        url = (url or "").strip()
+        if url.startswith("libsql://"):
+            return "https://" + url[len("libsql://"):]
+        if url.startswith("wss://"):
+            return "https://" + url[len("wss://"):]
+        return url
+
     async def __aenter__(self):
         import libsql_client
 
         self._client = libsql_client.create_client(
-            url=os.getenv("TURSO_DATABASE_URL"),
-            auth_token=os.getenv("TURSO_AUTH_TOKEN"),
+            url=self._http_url(os.getenv("TURSO_DATABASE_URL")),
+            auth_token=(os.getenv("TURSO_AUTH_TOKEN") or "").strip(),
         )
         return self
 
