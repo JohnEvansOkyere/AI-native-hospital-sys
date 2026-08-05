@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from db import init_db, get_db, DB_PATH, Connection
 from services.bot import process_message, trigger_care_reminder, trigger_checkin
 from services.ai import generate_weekly_report, display_first_name
-from services import stt, whatsapp
+from services import stt, tts, whatsapp
 
 load_dotenv()
 
@@ -360,7 +360,8 @@ async def enroll_patient(body: EnrollRequest):
 async def get_messages(patient_id: int, limit: int = 50):
     async with db_store.connect() as db:
         cursor = await db.execute(
-            "SELECT id, direction, body, reason, created_at, channel, audio_file, stt_provider, stt_language, stt_latency_ms "
+            "SELECT id, direction, body, reason, created_at, channel, audio_file, stt_provider, "
+            "stt_language, stt_latency_ms, tts_provider, tts_voice, tts_latency_ms "
             "FROM messages WHERE patient_id=? ORDER BY created_at DESC LIMIT ?",
             (patient_id, limit)
         )
@@ -371,6 +372,8 @@ async def get_messages(patient_id: int, limit: int = 50):
                 "channel": r[5] or "simulator",
                 "audio_file": r[6] or None, "stt_provider": r[7] or None,
                 "stt_language": r[8] or None, "stt_latency_ms": r[9] or None,
+                "tts_provider": r[10] or None, "tts_voice": r[11] or None,
+                "tts_latency_ms": r[12] or None,
             }
             for r in reversed(rows)
         ]
@@ -433,17 +436,51 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
             "stt_provider": voice.get("stt_provider") or None,
             "stt_language": voice.get("stt_language") or None,
             "stt_latency_ms": voice.get("stt_latency_ms") or None,
+            "tts_provider": None, "tts_voice": None, "tts_latency_ms": None,
         }
         await manager.broadcast(patient_id, {"type": "message", "message": inbound_msg})
 
         # Process and get bot reply
         bot_reply, reason, escalation_created = await process_message(patient_id, text, db)
 
+        # Answer in the modality the patient used: a voice note gets a spoken
+        # reply. Patients who send voice are disproportionately the ones who
+        # read with difficulty, so replying in text alone would throw away the
+        # accessibility the voice channel just bought us.
+        #
+        # Synthesised in the same language hint the transcript came in on, and
+        # before the row is written so the message arrives with its audio
+        # already attached rather than appearing mute and then updating.
+        spoken = None
+        if tts.should_speak(bool(voice)):
+            spoken = await tts.synthesize(
+                bot_reply,
+                language=voice.get("stt_language") or os.getenv("WHATSAPP_STT_LANGUAGE", "en"),
+                # WhatsApp takes MP3, and Ogg/Opus as a true voice-note bubble;
+                # browsers take either. Ask for Ogg first so the real channel
+                # gets the nicer rendering, and let the provider chain decide.
+                accept=("ogg", "mp3") if channel == "whatsapp" else tts.DEFAULT_ACCEPT,
+            )
+
+        reply_audio = ""
+        if spoken and spoken.ok:
+            reply_audio = f"p{patient_id}_reply_{uuid.uuid4().hex[:12]}{spoken.suffix}"
+            try:
+                (ensure_voice_dir() / reply_audio).write_bytes(spoken.audio)
+            except OSError as e:
+                # Read-only disk: the patient still hears the reply over
+                # WhatsApp, only the dashboard replay is lost.
+                logging.getLogger(__name__).warning("Could not store spoken reply: %s", e)
+                reply_audio = ""
+
         # Log outbound
         bot_now = datetime.now().isoformat()
         cursor = await db.execute(
-            "INSERT INTO messages (patient_id, direction, body, reason, created_at, channel) VALUES (?,?,?,?,?,?)",
-            (patient_id, "outbound", bot_reply, reason, bot_now, channel)
+            "INSERT INTO messages (patient_id, direction, body, reason, created_at, channel, "
+            "audio_file, tts_provider, tts_voice, tts_latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (patient_id, "outbound", bot_reply, reason, bot_now, channel, reply_audio,
+             spoken.provider if reply_audio else "", spoken.voice if reply_audio else "",
+             spoken.latency_ms if reply_audio else 0)
         )
         outbound_id = cursor.lastrowid
         await db.commit()
@@ -451,7 +488,11 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
         outbound_msg = {
             "id": outbound_id, "direction": "outbound", "body": bot_reply,
             "reason": reason, "created_at": bot_now, "channel": channel,
-            "audio_file": None, "stt_provider": None, "stt_language": None, "stt_latency_ms": None,
+            "audio_file": reply_audio or None,
+            "stt_provider": None, "stt_language": None, "stt_latency_ms": None,
+            "tts_provider": spoken.provider if reply_audio else None,
+            "tts_voice": spoken.voice if reply_audio else None,
+            "tts_latency_ms": spoken.latency_ms if reply_audio else None,
         }
         await manager.broadcast(patient_id, {"type": "message", "message": outbound_msg})
 
@@ -461,7 +502,18 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
         # Reply over the transport the patient actually used. The dashboard sees
         # the message either way via the broadcast above.
         if channel == "whatsapp":
-            await whatsapp.send_text(p["phone"], bot_reply)
+            # Text first, then the voice note. The text is the durable record
+            # and stays readable, searchable and forwardable to a family member;
+            # the audio is what the patient who can't read it needs. Set
+            # TTS_WHATSAPP_SEND_TEXT=0 for voice-only replies.
+            # Voice-only still falls back to text when synthesis failed —
+            # otherwise a dead TTS key means the patient gets nothing at all.
+            if not (spoken and spoken.ok) or os.getenv("TTS_WHATSAPP_SEND_TEXT", "1") != "0":
+                await whatsapp.send_text(p["phone"], bot_reply)
+            if spoken and spoken.ok:
+                await whatsapp.send_audio(
+                    p["phone"], spoken.audio, spoken.mime, f"reply{spoken.suffix}"
+                )
         await manager.broadcast(patient_id, {"type": "patient_updated", "patient": p})
         await manager.broadcast_all({"type": "patient_updated", "patient": p})
 
@@ -510,6 +562,31 @@ async def stt_status():
     }
 
 
+@app.get("/api/tts/status")
+async def tts_status():
+    """Which voice answers the patient, and whether it speaks at all.
+
+    Same honesty rule as /api/stt/status: report the provider that is actually
+    serving, not the one that is merely configured. `mode` matters as much as
+    the provider here — on 'mirror' a typed message gets no audio by design, and
+    that is not a fault to go hunting for mid-demo.
+    """
+    configured = tts.configured_providers()
+    pinned = os.getenv("TTS_PROVIDER") or None
+    healthy = [n for n in configured if n not in tts._degraded]
+    active = pinned if pinned in healthy else next(
+        (n for n in tts.provider_order() if n in healthy), None
+    )
+    return {
+        "configured": configured,
+        "pinned": pinned,
+        "active": active,
+        "degraded": tts._degraded,
+        "mode": tts.mode(),
+        "enabled": bool(configured) and tts.mode() != "off",
+    }
+
+
 @app.post("/api/patients/{patient_id}/voice")
 async def send_patient_voice_note(
     patient_id: int,
@@ -552,6 +629,7 @@ async def send_patient_voice_note(
                 "body": "Sorry, I couldn't hear that clearly. Please send it again, or type your message.",
                 "reason": None, "created_at": datetime.now().isoformat(),
                 "audio_file": None, "stt_provider": None, "stt_language": None, "stt_latency_ms": None,
+                "tts_provider": None, "tts_voice": None, "tts_latency_ms": None,
             },
             "escalation_created": False,
             "transcription": {
@@ -778,6 +856,9 @@ async def send_care_team_message(patient_id: int, body: str, db: Connection) -> 
         "stt_provider": None,
         "stt_language": None,
         "stt_latency_ms": None,
+        "tts_provider": None,
+        "tts_voice": None,
+        "tts_latency_ms": None,
     }
     event = {"type": "message", "message": message, "patient_id": patient_id}
     await manager.broadcast(patient_id, event)

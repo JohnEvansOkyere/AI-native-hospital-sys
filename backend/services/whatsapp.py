@@ -107,6 +107,59 @@ async def send_text(to: str, body: str) -> bool:
     return False
 
 
+async def send_audio(to: str, audio: bytes, mime: str, filename: str) -> bool:
+    """Send a spoken reply as a WhatsApp audio message. Never raises.
+
+    Two hops, the mirror of download_media(): upload the bytes to the media
+    endpoint for a media ID, then send a message referencing it.
+
+    Meta accepts audio/aac, audio/amr, audio/mpeg, audio/mp4 and audio/ogg —
+    the last one Opus-coded only. Ogg/Opus renders as a proper voice-note bubble
+    with a waveform; MP3 arrives as a playable audio attachment. Both play, so
+    the caller picks the container and this function stays dumb about it.
+
+    Returns False on any failure so the caller can fall back to text alone,
+    which is the reply the patient would have got anyway.
+    """
+    if not is_configured():
+        logger.warning("WhatsApp not configured; dropping voice reply to %s", mask_phone(to))
+        return False
+
+    phone_number_id = os.getenv("META_PHONE_NUMBER_ID")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            upload = await client.post(
+                f"{GRAPH_API}/{phone_number_id}/media",
+                headers=_auth_headers(),
+                data={"messaging_product": "whatsapp", "type": mime},
+                files={"file": (filename, audio, mime)},
+            )
+            upload.raise_for_status()
+            media_id = upload.json().get("id")
+            if not media_id:
+                logger.error("Media upload returned no id: %s", upload.text[:200])
+                return False
+
+            resp = await client.post(
+                f"{GRAPH_API}/{phone_number_id}/messages",
+                headers={**_auth_headers(), "Content-Type": "application/json"},
+                json={
+                    "messaging_product": "whatsapp",
+                    "to": to,
+                    "type": "audio",
+                    "audio": {"id": media_id},
+                },
+            )
+            resp.raise_for_status()
+        return True
+    except httpx.HTTPStatusError as e:
+        logger.error("WhatsApp audio send failed to %s: %s — %s",
+                     mask_phone(to), e, e.response.text[:200])
+    except httpx.HTTPError as e:
+        logger.error("WhatsApp audio HTTP error to %s: %s", mask_phone(to), e)
+    return False
+
+
 async def download_media(media_id: str, dest_dir: Path, stem: str) -> Path | None:
     """Fetch a voice note by media ID and write it to disk.
 

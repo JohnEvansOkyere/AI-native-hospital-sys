@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { api, Patient, Message, Escalation, LanguagePair, SttStatus } from './api/client'
+import { api, Patient, Message, Escalation, LanguagePair, SttStatus, TtsStatus } from './api/client'
 import { ClinicDashboard } from './components/ClinicDashboard'
 import { CareActionPanel } from './components/CareActionPanel'
 import ReactMarkdown from 'react-markdown'
 import {
   Activity, AlertTriangle, Bell, CheckCircle, ChevronRight,
   Clock, FileText, Heart, MessageCircle, Mic, Phone, Plus,
-  RefreshCw, Send, Shield, Trash2, TrendingUp, User, X, Zap
+  RefreshCw, Send, Shield, Trash2, TrendingUp, User, Volume2, X, Zap
 } from 'lucide-react'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -92,6 +92,14 @@ function providerLabel(p: string): string {
   if (p === 'openai_whisper') return 'Whisper API'
   if (p === 'sahara') return 'Intron Sahara'
   if (p === 'cartesia') return 'Cartesia Ink'
+  return p
+}
+
+/** TTS providers are different products from the STT ones that share their
+ *  vendor name — Cartesia Ink listens, Cartesia Sonic speaks. */
+function voiceLabel(p: string): string {
+  if (p === 'intron') return 'Intron TTS'
+  if (p === 'cartesia') return 'Cartesia Sonic'
   return p
 }
 
@@ -189,6 +197,7 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
 
   // ── Voice notes ──
   const [stt, setStt] = useState<SttStatus | null>(null)
+  const [tts, setTts] = useState<TtsStatus | null>(null)
   const [language, setLanguage] = useState<LanguagePair>('en')
   const [recording, setRecording] = useState(false)
   const [recordMs, setRecordMs] = useState(0)
@@ -259,6 +268,7 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
   // Which speech models are actually live, so the demo bar can say so honestly
   useEffect(() => {
     api.getSttStatus().then(setStt).catch(() => setStt(null))
+    api.getTtsStatus().then(setTts).catch(() => setTts(null))
   }, [])
 
   // Never leave the mic hot if the component unmounts mid-recording
@@ -406,11 +416,23 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
             {opt.label}
           </button>
         ))}
-        <span className="ml-auto text-xs text-slate-500">
-          {stt === null ? '…'
-            : stt.active
-              ? <>model: <span className="font-medium text-[#075E54]">{providerLabel(stt.active)}</span></>
-              : <span className="text-amber-700">no speech model configured</span>}
+        <span className="ml-auto text-xs text-slate-500 flex items-center gap-2">
+          <span>
+            {stt === null ? '…'
+              : stt.active
+                ? <>model: <span className="font-medium text-[#075E54]">{providerLabel(stt.active)}</span></>
+                : <span className="text-amber-700">no speech model configured</span>}
+          </span>
+          {/* Which voice answers, and whether it will. On the default 'mirror'
+              mode a typed message gets no audio by design — say so here rather
+              than let an operator read silence as a broken key. */}
+          {tts?.active && tts.enabled && (
+            <span className="flex items-center gap-1 border-l border-slate-200 pl-2">
+              <Volume2 size={11} className="text-[#075E54]" />
+              <span className="font-medium text-[#075E54]">{voiceLabel(tts.active)}</span>
+              {tts.mode === 'mirror' && <span className="text-slate-400">on voice notes</span>}
+            </span>
+          )}
         </span>
       </div>
 
@@ -441,21 +463,30 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
                   ${isOut ? 'bg-white text-slate-800 bubble-in' : 'bg-[#DCF8C6] text-slate-800 bubble-out'}`}
                   style={{ borderRadius: isOut ? '0px 12px 12px 12px' : '12px 0px 12px 12px' }}>
                   {msg.audio_file && (
-                    // Voice note: play the original, then show what the model heard.
-                    // Keeping both visible is the whole point — the gap between
-                    // them is what the benchmark measures.
+                    // Inbound: the patient's voice note, played above what the
+                    // model heard. Keeping both visible is the whole point — the
+                    // gap between them is what the benchmark measures.
+                    // Outbound: the agent's spoken reply, above the same words
+                    // in text. Either way, provenance travels with the audio.
                     <div className="mb-1.5">
                       <audio controls src={api.voiceNoteUrl(msg.audio_file)} className="h-8 w-full max-w-[220px]" />
                       <div className="mt-1 flex items-center gap-1 flex-wrap text-[10px] text-slate-500">
-                        <Mic size={9} />
-                        <span>heard by</span>
+                        {isOut ? <Volume2 size={9} /> : <Mic size={9} />}
+                        <span>{isOut ? 'spoken by' : 'heard by'}</span>
                         <span className="font-medium text-slate-600">
-                          {msg.stt_provider ? providerLabel(msg.stt_provider) : 'unknown'}
+                          {isOut
+                            ? (msg.tts_provider ? voiceLabel(msg.tts_provider) : 'unknown')
+                            : (msg.stt_provider ? providerLabel(msg.stt_provider) : 'unknown')}
                         </span>
-                        {msg.stt_language && (
+                        {!isOut && msg.stt_language && (
                           <span className="px-1 py-px rounded bg-slate-100 text-slate-500">{msg.stt_language}</span>
                         )}
-                        {!!msg.stt_latency_ms && <span>· {(msg.stt_latency_ms / 1000).toFixed(1)}s</span>}
+                        {isOut && msg.tts_voice && (
+                          <span className="px-1 py-px rounded bg-slate-100 text-slate-500">{msg.tts_voice}</span>
+                        )}
+                        {isOut
+                          ? !!msg.tts_latency_ms && <span>· {(msg.tts_latency_ms / 1000).toFixed(1)}s</span>
+                          : !!msg.stt_latency_ms && <span>· {(msg.stt_latency_ms / 1000).toFixed(1)}s</span>}
                       </div>
                     </div>
                   )}

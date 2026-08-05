@@ -106,6 +106,34 @@ same moment.
 `pcm-en`, `gaa-en`) — WhatsApp doesn't tell us what language a note is in, so this
 is a deployment default rather than per-message detection.
 
+## Spoken replies
+
+A patient who sends a voice note gets one back. `TTS_MODE=mirror` — the default —
+speaks only when the patient spoke, so typed conversations cost no synthesis
+credit and get no audio. `always` speaks every reply; `off` disables it.
+
+The reply is sent twice, as text and then as audio, because they do different
+jobs: the text stays readable, searchable and forwardable to a family member,
+while the audio is what a patient who can't read it needs. Set
+`TTS_WHATSAPP_SEND_TEXT=0` for voice-only.
+
+Providers reuse the STT keys — `INTRON_API_KEY` and `CARTESIA_API_KEY`, nothing
+new to obtain. Intron returns Ogg/Opus, which WhatsApp renders as a true
+voice-note bubble with a waveform; Cartesia returns MP3, which arrives as a
+playable attachment. Both work, and with neither key set the agent simply replies
+in text as it always did.
+
+Two things to know before you promise a Ghanaian voice:
+
+- **Intron TTS has no Twi, Akan or Ga.** It has Pidgin (`pcm-en` uses it) and ten
+  English accents, none Ghanaian. `INTRON_TTS_ACCENT` defaults to `hausa`, the
+  only one of the ten also spoken in Ghana. Sahara *recognises* tw/ak/gaa; nothing
+  yet *speaks* them.
+- **Intron is slow.** Measured 5 Aug 2026 on a one-sentence reply: Intron 17–25s,
+  Cartesia 2.8s. WhatsApp is asynchronous so this is a delay rather than a
+  failure, but if it's too long for your pilot set `TTS_ORDER=cartesia,intron`,
+  which reorders the chain without losing the fallback.
+
 Deployed, voice notes need a **hosted** STT provider; the local offline engine
 isn't installed on Vercel. See [DEPLOY.md](DEPLOY.md#speech-to-text-on-vercel).
 
