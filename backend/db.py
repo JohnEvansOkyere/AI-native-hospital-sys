@@ -1,6 +1,9 @@
 import aiosqlite
+import base64
+import httpx
 import json
 import os
+import re
 from datetime import datetime, timedelta, date
 from typing import Union
 import random
@@ -34,12 +37,68 @@ def connect():
 Connection = Union[aiosqlite.Connection, "_TursoConnection"]
 
 
+def turso_http_url(url: str) -> str:
+    """Turn the URL Turso gives you into the one its HTTP API lives on.
+
+    `turso db show --url` prints a `libsql://` URL. The Hrana-over-HTTP endpoint
+    is the same host over https, so normalise the scheme rather than making
+    every deployment remember to rewrite it. Whitespace is stripped because a
+    newline pasted into a dashboard silently corrupts the host.
+    """
+    url = (url or "").strip().rstrip("/")
+    for scheme in ("libsql://", "wss://", "ws://"):
+        if url.startswith(scheme):
+            return "https://" + url[len(scheme):]
+    return url
+
+
+def split_sql(script: str) -> list[str]:
+    """Split a multi-statement script into individual statements.
+
+    Line comments are removed *before* splitting: a `--` comment may itself
+    contain a semicolon, and splitting on that would tear one statement into
+    two invalid fragments. (SCHEMA below has exactly such a comment.)
+    """
+    without_comments = re.sub(r"--[^\n]*", "", script)
+    return [s.strip() for s in without_comments.split(";") if s.strip()]
+
+
+def _to_arg(value):
+    """Encode a Python value as a Hrana typed argument."""
+    if value is None:
+        return {"type": "null"}
+    if isinstance(value, bool):
+        return {"type": "integer", "value": str(int(value))}
+    if isinstance(value, int):
+        # Hrana carries 64-bit integers as strings to survive JSON.
+        return {"type": "integer", "value": str(value)}
+    if isinstance(value, float):
+        return {"type": "float", "value": value}
+    if isinstance(value, (bytes, bytearray)):
+        return {"type": "blob", "value": base64.b64encode(bytes(value)).decode()}
+    return {"type": "text", "value": str(value)}
+
+
+def _from_value(value):
+    """Decode a Hrana typed value back into Python."""
+    kind = value.get("type")
+    if kind == "null":
+        return None
+    if kind == "integer":
+        return int(value["value"])
+    if kind == "float":
+        return float(value["value"])
+    if kind == "blob":
+        return base64.b64decode(value["value"])
+    return value.get("value")
+
+
 class _TursoCursor:
     """Mimics the slice of aiosqlite.Cursor this codebase touches."""
 
-    def __init__(self, result_set):
-        self._rows = [tuple(row) for row in result_set.rows]
-        self.lastrowid = result_set.last_insert_rowid
+    def __init__(self, rows, lastrowid):
+        self._rows = rows
+        self.lastrowid = lastrowid
 
     async def fetchone(self):
         return self._rows[0] if self._rows else None
@@ -49,58 +108,74 @@ class _TursoCursor:
 
 
 class _TursoConnection:
-    """aiosqlite-shaped adapter over libsql (Turso).
+    """aiosqlite-shaped adapter over Turso's Hrana-over-HTTP API.
 
-    Turso speaks SQLite dialect, so every query in this app is unchanged. The
-    only real differences are that statements autocommit (commit() is a no-op)
-    and that multi-statement scripts must be sent one statement at a time.
+    Talks to /v2/pipeline directly instead of using libsql-client, whose HTTP
+    transport still posts to the retired `v1/execute` endpoint and fails against
+    current Turso with a bare KeyError. Plain HTTP also suits a serverless host
+    better than the alternative WebSocket transport: no connection to hold open
+    across an invocation that may be frozen at any moment.
+
+    Turso speaks SQLite dialect, so every query in this app is unchanged.
+    Statements autocommit, which is why commit() is a no-op.
     """
 
     def __init__(self):
         self._client = None
 
-    @staticmethod
-    def _http_url(url: str) -> str:
-        """Force the HTTP transport.
-
-        libsql_client maps a `libsql://` URL onto its WebSocket transport, which
-        current Turso instances reject at the handshake with HTTP 400. The
-        supported path is Hrana over HTTP at /v2/pipeline, which the client uses
-        for `https://` URLs. Turso hands you a `libsql://` URL, so normalise it
-        rather than making every deployment remember to rewrite the scheme.
-        """
-        url = (url or "").strip()
-        if url.startswith("libsql://"):
-            return "https://" + url[len("libsql://"):]
-        if url.startswith("wss://"):
-            return "https://" + url[len("wss://"):]
-        return url
-
     async def __aenter__(self):
-        import libsql_client
-
-        self._client = libsql_client.create_client(
-            url=self._http_url(os.getenv("TURSO_DATABASE_URL")),
-            auth_token=(os.getenv("TURSO_AUTH_TOKEN") or "").strip(),
+        self._client = httpx.AsyncClient(
+            base_url=turso_http_url(os.getenv("TURSO_DATABASE_URL")),
+            headers={"Authorization": f"Bearer {(os.getenv('TURSO_AUTH_TOKEN') or '').strip()}"},
+            timeout=30,
         )
         return self
 
     async def __aexit__(self, *exc):
         if self._client is not None:
-            await self._client.close()
+            await self._client.aclose()
         return False
 
+    async def _pipeline(self, statements: list[dict]) -> list[dict]:
+        """Send statements as one pipeline and return their results in order."""
+        requests = [{"type": "execute", "stmt": s} for s in statements]
+        requests.append({"type": "close"})
+
+        response = await self._client.post("/v2/pipeline", json={"requests": requests})
+        if response.status_code != 200:
+            # Turso reports a rejected credential as 400/401 with a JSON body;
+            # surfacing it verbatim is what makes a misconfiguration diagnosable.
+            raise RuntimeError(
+                f"Turso HTTP {response.status_code}: {response.text[:200]}"
+            )
+
+        results = []
+        for item in response.json().get("results", []):
+            if item.get("type") == "error":
+                message = (item.get("error") or {}).get("message", "unknown error")
+                raise RuntimeError(f"Turso: {message}")
+            inner = item.get("response") or {}
+            if inner.get("type") == "execute":
+                results.append(inner.get("result", {}))
+        return results
+
     async def execute(self, sql: str, params=()):
-        return _TursoCursor(await self._client.execute(sql, list(params)))
+        stmt = {"sql": sql, "args": [_to_arg(p) for p in params]}
+        result = (await self._pipeline([stmt]))[0]
+        rows = [
+            tuple(_from_value(cell) for cell in row)
+            for row in result.get("rows", [])
+        ]
+        rowid = result.get("last_insert_rowid")
+        return _TursoCursor(rows, int(rowid) if rowid is not None else None)
 
     async def executescript(self, script: str):
-        # libsql has no executescript; CREATE TABLE IF NOT EXISTS statements are
-        # idempotent so replaying them one by one is equivalent.
-        for statement in filter(None, (s.strip() for s in script.split(";"))):
-            await self._client.execute(statement)
+        statements = [{"sql": s, "args": []} for s in split_sql(script)]
+        if statements:
+            await self._pipeline(statements)
 
     async def commit(self):
-        """No-op — libsql autocommits each statement."""
+        """No-op — each statement autocommits."""
         return None
 
 SCHEMA = """

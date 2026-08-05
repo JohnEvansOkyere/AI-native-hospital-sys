@@ -8,9 +8,9 @@ requests>=2.31
 python-multipart>=0.0.9
 httpx>=0.27
 
-# Turso / libSQL. Only used when TURSO_DATABASE_URL is set; on a local run the
-# app opens the SQLite file directly and never imports this.
-libsql-client>=0.3.1
+# Turso needs no client library: db.py speaks Hrana over HTTP (/v2/pipeline)
+# using httpx above. libsql-client is deliberately not used — its HTTP transport
+# still posts to the retired v1/execute endpoint and fails against current Turso.
 
 # Speech-to-text providers. All optional and loaded lazily — the app degrades to
 # "I couldn't hear that, please type it" when none are available.
