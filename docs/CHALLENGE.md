@@ -87,8 +87,9 @@ That's precisely why task-success metrics beat WER, and it belongs in the report
 
 ```
 backend/services/stt.py  Shared STT layer: Sahara / Cartesia / OpenAI / local faster-whisper
+backend/services/appointments.py  Deterministic slots + persisted booking/reschedule/cancel action
 backend/main.py          POST /api/patients/{id}/voice, GET /api/stt/status, GET /api/voice/{file}
-frontend/src/App.tsx     Mic button, language selector, voice bubbles w/ model + latency
+frontend/src/App.tsx     Voice simulator plus live care-team and appointment dashboards
 benchmark/stt_providers.py   Thin re-export of backend/services/stt.py
 benchmark/run_benchmark.py   Transcribe + score, writes results/{transcripts,summary}.csv
 benchmark/probe_languages.py Verifies which language codes each key actually accepts
@@ -102,6 +103,13 @@ literally the models serving patients, same request parameters and all.
 Verified end to end: a spoken *"one sixty over one hundred"* → transcript →
 BP extraction → escalation fired → patient flipped green to red → clinical reply
 sent. Round trip ~4s on local Whisper `base`, CPU only.
+
+Also verified end to end: a code-switched appointment request → available clinic
+slots → patient selection → confirmed database record → live Appointments dashboard.
+Rescheduling and cancellation update that record, and a database constraint prevents
+two confirmed bookings for the same clinician, date and time. This is the challenge's
+real downstream agent action; success is measured by the stored appointment, not by
+whether the transcript merely contains the word “appointment.”
 
 ### Language support — this is the headline
 

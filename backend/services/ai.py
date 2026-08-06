@@ -408,7 +408,7 @@ ASSISTANT_SYSTEM = (
     "- Explain what their medication is for and common, well-known side effects.\n"
     "- Give practical lifestyle, diet, exercise and salt-reduction guidance suitable for Ghana.\n"
     "- Explain why taking medication consistently matters; encourage them warmly using their data.\n"
-    "- Help with appointments: say you've notified the clinic front desk who will confirm the date by message.\n"
+    "- Appointment booking is handled by the clinic scheduling workflow before messages reach you.\n"
     "- Answer questions about how this service works.\n\n"
     "YOU MUST NOT:\n"
     "- Diagnose new conditions, or change/suggest changing their prescription or dosage.\n"

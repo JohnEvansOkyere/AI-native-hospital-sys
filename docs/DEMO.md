@@ -8,7 +8,7 @@ How to run the demo and walk a clinic (or pharmacy) through it so they can't say
 
 ```bash
 cd /home/grejoy/Projects/Clinic-Bot
-cp .env.example .env        # paste ANTHROPIC_API_KEY for the live AI report
+cp .env.example .env        # paste GROQ_API_KEY for the live AI report
 ./start.sh                  # wait for "VeloxaCare is running!"
 ```
 
@@ -22,7 +22,7 @@ rm backend/veloxacare.db        # then restart ./start.sh — it re-seeds automa
 **Pre-flight checklist**
 - [ ] Dashboard loads with 6 patients and red alerts already showing.
 - [ ] Click "Weekly Report" once to warm it up (confirms your API key works).
-- [ ] Browser zoomed so the 3 columns (patients · detail · WhatsApp) all show.
+- [ ] Clinic view and patient conversation are both readable at the chosen zoom.
 - [ ] If no internet at the venue: the system still works — only the *AI* report and
       *AI* reason-detection fall back to rules. Everything else is local. Demo safely.
 
@@ -44,7 +44,7 @@ clinic that's been running VeloxaCare for two weeks:
 
 ---
 
-## 2. The live walk-through (3–4 minutes)
+## 2. The live walk-through (4–5 minutes)
 
 ### Beat 1 — "We catch the ones who slip" (Kofi Mensah, red, 8%)
 - Click **Kofi Mensah**.
@@ -75,16 +75,30 @@ clinic that's been running VeloxaCare for two weeks:
 > *"This is a well-managed patient — and she stays that way because someone checks in
 > every single morning. That 'someone' costs you nothing."*
 
-### Beat 4 — "What the doctor actually wants" (the report)
+### Beat 4 — "The agent takes action" (book an appointment)
+- Open **Demo**, choose **Abena Owusu**, then click **Book 📅** and send.
+- The agent offers real available times. Reply **1**.
+- Open **Appointments** in the top bar. The confirmed booking is already in the
+  clinic schedule; no one copied it from the conversation.
+- Click **Complete** to show where the automation hands control to clinic staff.
+
+> *"This is not a transcription demo. The patient asked for care, the agent checked
+> real availability, prevented double-booking, created the appointment and gave the
+> clinic a record it can act on. The same flow works from a WhatsApp voice note."*
+
+For the code-switched version, send:
+`Mepɛ sɛ mebook appointment wɔ Dr. Mensah nkyɛn ɔkyena anɔpa` and reply `1`.
+
+### Beat 5 — "What the doctor actually wants" (the report)
 - Click **Weekly Report** in the top bar.
-- Claude generates a doctor-ready summary: urgent cases first, per-patient breakdown,
+- Groq generates a doctor-ready summary: urgent cases first, per-patient breakdown,
   recommended actions. Click **Print / Save PDF**.
 
 > *"This lands on the doctor's desk the night before clinic. Every patient, summarized,
 > ranked by risk. Your doctor walks into each consultation already knowing the story.
 > This is the thing you're really buying."*
 
-### Beat 5 — "Onboarding is 30 seconds" (enroll live)
+### Beat 6 — "Onboarding is 30 seconds" (enroll live)
 - Click **Enroll Patient**, fill it in with *their* name and number, submit.
 - A welcome WhatsApp message appears instantly in the thread.
 
@@ -101,6 +115,7 @@ clinic that's been running VeloxaCare for two weeks:
 | Cost 💸 | "I can't afford it this week" | Reason detection → cost → NHIS escalation |
 | High BP 🔴 | `168/102` | Rule-based danger detection → live red alert |
 | Good BP ✅ | `128/82` | Healthy reading → positive feedback |
+| Book 📅 | "Please book me an appointment for Tuesday morning" | Real slot selection → saved clinic appointment |
 
 You can also free-type anything as the patient — try *"I forgot, I was at work"* or
 *"the medicine makes me dizzy"* to show the AI classifying `forgot` vs `side_effect`.

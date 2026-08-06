@@ -280,6 +280,25 @@ CREATE TABLE IF NOT EXISTS care_logs (
     details TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS appointments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id INTEGER NOT NULL REFERENCES patients(id),
+    appointment_date TEXT NOT NULL,
+    appointment_time TEXT NOT NULL,
+    clinician_name TEXT NOT NULL,
+    visit_type TEXT NOT NULL DEFAULT 'Clinic consultation',
+    status TEXT NOT NULL DEFAULT 'confirmed',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_confirmed_slot
+ON appointments(clinician_name, appointment_date, appointment_time)
+WHERE status='confirmed';
+
+CREATE INDEX IF NOT EXISTS idx_appointments_patient_date
+ON appointments(patient_id, appointment_date, appointment_time);
 """
 
 SEED_PATIENTS = [
