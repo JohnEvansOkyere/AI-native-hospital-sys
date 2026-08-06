@@ -2,6 +2,7 @@ import json
 from datetime import date, datetime
 from typing import Optional
 from db import Connection
+from services.appointments import handle_appointment_turn
 
 from services.ai import (
     detect_reason_ai, detect_reason_rule, generate_bot_reply,
@@ -366,7 +367,7 @@ async def process_message(patient_id: int, message: str, db: Connection):
     # Get patient
     cursor = await db.execute(
         """SELECT name, condition, drug_name, drug_dosage, category, service_type,
-                  care_instructions, next_follow_up, recall_date, reminder_time
+                  care_instructions, next_follow_up, recall_date, reminder_time, doctor_name
            FROM patients WHERE id=?""",
         (patient_id,),
     )
@@ -374,7 +375,7 @@ async def process_message(patient_id: int, message: str, db: Connection):
     if not patient:
         return "Sorry, I couldn't find your profile.", None, False
     (name, condition, drug_name, drug_dosage, category, service_type,
-     care_instructions, next_follow_up, recall_date, reminder_time) = patient
+     care_instructions, next_follow_up, recall_date, reminder_time, doctor_name) = patient
 
     # Get conversation state
     cursor = await db.execute("SELECT current_flow, context FROM conversation_state WHERE patient_id=?", (patient_id,))
@@ -447,6 +448,28 @@ async def process_message(patient_id: int, message: str, db: Connection):
         )
         await db.commit()
         return bot_reply, reason, True
+
+    # ── APPOINTMENTS (real downstream action) ──
+    # Emergency handling stays above this. The assistant structures the request,
+    # while deterministic availability rules create the actual database record.
+    appointment_turn = await handle_appointment_turn(
+        db=db,
+        patient_id=patient_id,
+        patient_name=name,
+        clinician_name=doctor_name or "Dr. Mensah",
+        visit_type=service_type or f"{condition.title()} review",
+        current_flow=current_flow,
+        context=context,
+        message=message,
+    )
+    if appointment_turn:
+        bot_reply, new_flow, new_context = appointment_turn
+        await db.execute(
+            "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+            (patient_id, new_flow, json.dumps(new_context)),
+        )
+        await db.commit()
+        return bot_reply, None, False
 
     if category == "dental":
         return await _process_dental_message(

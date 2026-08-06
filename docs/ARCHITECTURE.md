@@ -32,11 +32,11 @@ clinic, and surfaces the ones who are slipping — *and why* — to the care tea
          │                        │
          ▼                        ▼
  ┌──────────────┐        ┌──────────────────┐
- │  Database    │        │  Claude (ai.py)  │
+ │  Database    │        │  Groq (ai.py)    │
  │  SQLite now  │        │  • reason detect │
- │  Supabase/PG │        │    (Haiku)       │
+ │  Turso prod  │        │    (Llama 3.1)   │
  │  in prod     │        │  • weekly report │
- └──────────────┘        │    (Sonnet)      │
+ └──────────────┘        │    (Llama 3.3)   │
          │               │  • BP risk =     │
          ▼               │    RULE-BASED    │
  ┌──────────────┐        └──────────────────┘
@@ -71,6 +71,7 @@ SQLite tables (see [backend/db.py](../backend/db.py)). Maps 1:1 to Postgres/Supa
 | `checkin_logs` | BP (or other) readings with computed `risk_level` + AI note |
 | `conversation_state` | Per-patient flow pointer (`idle` / `awaiting_medication_ack` / `awaiting_bp`) |
 | `escalations` | Care-team alerts with reason, risk, JSON details, resolved flag |
+| `appointments` | Patient-requested clinic slot, clinician, visit type and operational status |
 
 **Enums (keep consistent across DB / API / UI):**
 - `risk_level`: `green` | `amber` | `red`
@@ -88,6 +89,8 @@ SQLite tables (see [backend/db.py](../backend/db.py)). Maps 1:1 to Postgres/Supa
    - **`awaiting_medication_ack`** → if YES, log adherence + reinforce (streak-aware);
      if NO, detect reason → log → reply → escalate if needed.
    - **`awaiting_bp`** → parse `NNN/NN`, assess risk (rule-based), log, escalate.
+   - **`appointment_*`** → collect date/time, check availability, then create,
+     reschedule or cancel the stored appointment.
    - **`idle`** → best-effort: detect BP reading, YES, or NO+reason from free text.
 3. Updates `conversation_state` and commits.
 4. Returns `(reply, reason, escalation_created)` to the route, which logs the outbound
@@ -112,15 +115,14 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 
 | Function | Model | Job | Fallback |
 |---|---|---|---|
-| `detect_reason_ai` | `claude-haiku-4-5` | Classify why a dose was missed → one reason code | keyword rules (`detect_reason_rule`) |
-| `generate_bot_reply` | `claude-haiku-4-5` | Warm free-text reply for unclear "no" cases | templated responses |
-| `generate_weekly_report` | `claude-sonnet-4-6` | Doctor-ready markdown clinic report | templated summary |
+| `detect_reason_ai` | `llama-3.1-8b-instant` | Classify why a dose was missed → one reason code | keyword rules (`detect_reason_rule`) |
+| `generate_bot_reply` | `llama-3.1-8b-instant` | Warm free-text reply for unclear "no" cases | templated responses |
+| `generate_weekly_report` | `llama-3.3-70b-versatile` | Doctor-ready markdown clinic report | templated summary |
 | `assess_bp_risk` | **none (rules)** | BP → risk + patient message | n/a — always rules |
 
-**Why these models:** Haiku is cheap/fast for the high-volume classification path;
-Sonnet produces the higher-stakes clinician report. BP risk is intentionally *never*
-an LLM call. When upgrading models, keep Haiku-class for per-message work to control
-cost at scale.
+**Why these models:** the 8B model is cheap/fast for high-volume per-message work;
+the 70B model produces the clinician report. BP risk is intentionally *never* an
+LLM call. Override the defaults with `GROQ_FAST_MODEL` and `GROQ_REPORT_MODEL`.
 
 ---
 
@@ -135,9 +137,13 @@ cost at scale.
 | POST | `/api/patients/{id}/messages` | **Inbound message → bot reply** (core loop) |
 | POST | `/api/patients/{id}/remind` | Fire medication reminder |
 | POST | `/api/patients/{id}/checkin` | Fire weekly BP check-in |
+| GET | `/api/appointments` | Clinic schedule with patient and status |
+| GET | `/api/patients/{id}/appointments` | One patient's appointment history |
+| POST | `/api/appointments` | Staff-created appointment with collision protection |
+| PATCH | `/api/appointments/{id}` | Reschedule, complete, cancel or mark no-show |
 | GET | `/api/alerts` | Open escalations across all patients |
 | POST | `/api/alerts/{id}/resolve` | Resolve an alert |
-| GET | `/api/reports/weekly` | Claude-generated weekly report |
+| GET | `/api/reports/weekly` | Groq-generated weekly report |
 | WS | `/ws/{patient_id}` | Per-patient live message stream |
 | WS | `/ws/-1` | Global stream (enrollments, escalations, updates) |
 

@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { api, Patient, Message, Escalation, LanguagePair, SttStatus, TtsStatus } from './api/client'
+import { api, Appointment, Patient, Message, Escalation, LanguagePair, SttStatus, TtsStatus } from './api/client'
 import { voiceLabel } from './components/shared'
 import { ClinicDashboard } from './components/ClinicDashboard'
 import { CareActionPanel } from './components/CareActionPanel'
+import { AppointmentsPanel } from './components/AppointmentsPanel'
 import ReactMarkdown from 'react-markdown'
 import {
-  Activity, AlertTriangle, Bell, CheckCircle, ChevronRight,
+  Activity, AlertTriangle, Bell, CalendarDays, CheckCircle, ChevronRight,
   Clock, FileText, Heart, MessageCircle, Mic, Phone, Plus,
   RefreshCw, Send, Shield, Trash2, TrendingUp, User, Volume2, X, Zap
 } from 'lucide-react'
@@ -376,9 +377,10 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
       </div>
 
       {/* Demo action bar */}
-      <div className="bg-[#ECE5DD] border-b border-[#d4c9bf] px-3 py-1.5 flex gap-2 items-center">
+      <div className="bg-[#ECE5DD] border-b border-[#d4c9bf] px-3 py-1.5 flex gap-2 items-center overflow-x-auto">
         <Zap size={12} className="text-amber-600" />
         <span className="text-xs text-slate-500 font-medium">Demo — type as {firstName}:</span>
+        <button onClick={() => setInput('Please book me an appointment for Tuesday morning')} className="text-xs bg-white border border-slate-200 px-2 py-0.5 rounded-full hover:bg-slate-50 whitespace-nowrap">Book 📅</button>
         {isFollowUp ? (
           <>
             <button onClick={() => setInput('Done, I followed the instructions')} className="text-xs bg-white border border-slate-200 px-2 py-0.5 rounded-full hover:bg-slate-50">Care done ✅</button>
@@ -924,6 +926,7 @@ function ReportModal({ onClose }: { onClose: () => void }) {
 export default function App() {
   const [patients, setPatients] = useState<Patient[]>([])
   const [alerts, setAlerts] = useState<Escalation[]>([])
+  const [appointments, setAppointments] = useState<Appointment[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [showEnroll, setShowEnroll] = useState(false)
   const [showReport, setShowReport] = useState(false)
@@ -931,14 +934,15 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   // 'clinic' is the real product surface; 'demo' is the WhatsApp simulator kept
   // as a fallback for when the live webhook can't be reached.
-  const [view, setView] = useState<'clinic' | 'demo'>('clinic')
+  const [view, setView] = useState<'clinic' | 'appointments' | 'demo'>('clinic')
   // Bumped whenever a message lands, so the open patient timeline refetches.
   const [refreshKey, setRefreshKey] = useState(0)
 
   const loadData = useCallback(async () => {
-    const [ps, as] = await Promise.all([api.getPatients(), api.getAlerts()])
+    const [ps, as, aps] = await Promise.all([api.getPatients(), api.getAlerts(), api.getAppointments()])
     setPatients(ps)
     setAlerts(as)
+    setAppointments(aps)
     if (!selectedId && ps.length > 0) setSelectedId(ps[0].id)
     setLoading(false)
   }, [selectedId])
@@ -963,6 +967,14 @@ export default function App() {
       if (data.patient) {
         setPatients(prev => prev.map(p => p.id === data.patient.id ? data.patient : p))
       }
+    }
+    if (data.type === 'appointment_updated') {
+      setAppointments(prev => {
+        const appointment = data.appointment as Appointment
+        return prev.some(item => item.id === appointment.id)
+          ? prev.map(item => item.id === appointment.id ? appointment : item)
+          : [...prev, appointment]
+      })
     }
     // A message landed on some channel — WhatsApp included. Nudge the open
     // timeline to refetch so the clinic view stays live.
@@ -1015,6 +1027,11 @@ export default function App() {
     loadData()
     setRefreshKey(key => key + 1)
   }, [loadData])
+
+  const handleAppointmentStatus = useCallback(async (id: number, status: Appointment['status']) => {
+    const updated = await api.updateAppointment(id, { status })
+    setAppointments(prev => prev.map(item => item.id === id ? updated : item))
+  }, [])
 
   if (loading) return (
     <div className="flex items-center justify-center h-screen bg-slate-50">
@@ -1080,6 +1097,11 @@ export default function App() {
                 view === 'clinic' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
               Clinic
             </button>
+            <button onClick={() => setView('appointments')}
+              className={`px-3 py-2 font-medium transition inline-flex items-center gap-1.5 ${
+                view === 'appointments' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              <CalendarDays size={13} /> Appointments
+            </button>
             <button onClick={() => setView('demo')}
               title="WhatsApp simulator — same backend path, for demos without the live webhook"
               className={`px-3 py-2 font-medium transition ${
@@ -1109,6 +1131,15 @@ export default function App() {
           onOpenAlert={openCareCase}
           onActivity={handlePatientUpdate}
           refreshKey={refreshKey}
+        />
+      ) : view === 'appointments' ? (
+        <AppointmentsPanel
+          appointments={appointments}
+          onOpenPatient={(patientId) => {
+            setSelectedId(patientId)
+            setView('clinic')
+          }}
+          onUpdate={handleAppointmentStatus}
         />
       ) : (
         /* Demo mode: the WhatsApp simulator. Patients are on real WhatsApp, but

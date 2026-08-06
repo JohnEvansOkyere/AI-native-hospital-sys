@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from db import init_db, get_db, DB_PATH, Connection
 from services.bot import process_message, trigger_care_reminder, trigger_checkin
 from services.ai import generate_weekly_report, display_first_name
-from services import stt, tts, whatsapp
+from services import appointments, stt, tts, whatsapp
 
 load_dotenv()
 
@@ -403,6 +403,20 @@ class ResolveAlertRequest(BaseModel):
     resolved_by: str = "Care team"
 
 
+class AppointmentCreateRequest(BaseModel):
+    patient_id: int
+    appointment_date: str
+    appointment_time: str
+    clinician_name: str = ""
+    visit_type: str = ""
+
+
+class AppointmentUpdateRequest(BaseModel):
+    appointment_date: Optional[str] = None
+    appointment_time: Optional[str] = None
+    status: Optional[Literal["confirmed", "cancelled", "completed", "no_show"]] = None
+
+
 async def ingest_patient_message(patient_id: int, text: str, voice: dict | None = None,
                                  channel: str = "simulator"):
     """Run one inbound patient turn: log it, let the bot act, broadcast everything.
@@ -516,6 +530,13 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
                 )
         await manager.broadcast(patient_id, {"type": "patient_updated", "patient": p})
         await manager.broadcast_all({"type": "patient_updated", "patient": p})
+
+        changed_appointment = await appointments.latest_changed_since(db, patient_id, now)
+        if changed_appointment:
+            await manager.broadcast_all({
+                "type": "appointment_updated",
+                "appointment": changed_appointment,
+            })
 
         if escalation_created:
             cursor = await db.execute(
@@ -903,6 +924,96 @@ async def send_checkin(patient_id: int):
         if not prompt:
             raise HTTPException(status_code=404, detail="Patient not found")
         return await send_care_team_message(patient_id, prompt, db)
+
+
+# ── Routes: appointments ─────────────────────────────────────────────────────
+
+def _validated_appointment_date(value: str) -> date:
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Appointment date must be YYYY-MM-DD")
+    error = appointments.validate_appointment_date(parsed)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return parsed
+
+
+def _validate_appointment_time(value: str) -> str:
+    if value not in appointments.ALL_SLOTS:
+        choices = ", ".join(appointments.format_time(slot) for slot in appointments.ALL_SLOTS)
+        raise HTTPException(status_code=400, detail=f"Choose a clinic time: {choices}")
+    return value
+
+
+@app.get("/api/appointments")
+async def get_appointments(status: Optional[str] = None, include_past: bool = True):
+    async with db_store.connect() as db:
+        rows = await appointments.list_appointments(db, include_past=include_past)
+        return [item for item in rows if not status or item["status"] == status]
+
+
+@app.get("/api/patients/{patient_id}/appointments")
+async def get_patient_appointments(patient_id: int):
+    async with db_store.connect() as db:
+        return await appointments.list_appointments(db, patient_id=patient_id)
+
+
+@app.post("/api/appointments")
+async def create_staff_appointment(body: AppointmentCreateRequest):
+    _validated_appointment_date(body.appointment_date)
+    _validate_appointment_time(body.appointment_time)
+    async with db_store.connect() as db:
+        cursor = await db.execute(
+            "SELECT doctor_name, service_type, condition FROM patients WHERE id=?",
+            (body.patient_id,),
+        )
+        patient = await cursor.fetchone()
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        clinician = body.clinician_name.strip() or patient[0] or "Dr. Mensah"
+        visit_type = body.visit_type.strip() or patient[1] or f"{patient[2]} review"
+        try:
+            appointment = await appointments.create_appointment(
+                db, body.patient_id, body.appointment_date, body.appointment_time,
+                clinician, visit_type,
+            )
+        except Exception as exc:
+            if "unique" in str(exc).lower() or "constraint" in str(exc).lower():
+                raise HTTPException(status_code=409, detail="That clinic slot has already been booked")
+            raise
+        await manager.broadcast_all({"type": "appointment_updated", "appointment": appointment})
+        return appointment
+
+
+@app.patch("/api/appointments/{appointment_id}")
+async def update_appointment(appointment_id: int, body: AppointmentUpdateRequest):
+    async with db_store.connect() as db:
+        current = await appointments.get_appointment(db, appointment_id)
+        if not current:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        appointment = current
+        if body.appointment_date is not None or body.appointment_time is not None:
+            next_date = body.appointment_date or current["appointment_date"]
+            next_time = body.appointment_time or current["appointment_time"]
+            _validated_appointment_date(next_date)
+            _validate_appointment_time(next_time)
+            cursor = await db.execute(
+                """SELECT id FROM appointments WHERE clinician_name=? AND appointment_date=?
+                   AND appointment_time=? AND status='confirmed' AND id<>?""",
+                (current["clinician_name"], next_date, next_time, appointment_id),
+            )
+            if await cursor.fetchone():
+                raise HTTPException(status_code=409, detail="That clinic slot has already been booked")
+            appointment = await appointments.reschedule_appointment(
+                db, appointment_id, next_date, next_time,
+            )
+        if body.status is not None:
+            appointment = await appointments.update_status(db, appointment_id, body.status)
+
+        await manager.broadcast_all({"type": "appointment_updated", "appointment": appointment})
+        return appointment
 
 
 # ── Routes: alerts ────────────────────────────────────────────────────────────

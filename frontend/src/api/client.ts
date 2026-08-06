@@ -115,6 +115,19 @@ export interface DeliveryResult {
   delivery_note: string
 }
 
+export interface Appointment {
+  id: number
+  patient_id: number
+  patient_name: string
+  appointment_date: string
+  appointment_time: string
+  clinician_name: string
+  visit_type: string
+  status: 'confirmed' | 'cancelled' | 'completed' | 'no_show'
+  created_at: string
+  updated_at: string
+}
+
 export const api = {
   async getPatients(): Promise<Patient[]> {
     const r = await fetch(`${BASE}/patients`)
@@ -222,6 +235,28 @@ export const api = {
 
   async getAlerts(): Promise<Escalation[]> {
     const r = await fetch(`${BASE}/alerts`)
+    return r.json()
+  },
+
+  async getAppointments(): Promise<Appointment[]> {
+    const r = await fetch(`${BASE}/appointments`)
+    if (!r.ok) throw new Error('Appointments could not be loaded')
+    return r.json()
+  },
+
+  async updateAppointment(
+    id: number,
+    data: Partial<Pick<Appointment, 'appointment_date' | 'appointment_time' | 'status'>>,
+  ): Promise<Appointment> {
+    const r = await fetch(`${BASE}/appointments/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      throw new Error(err.detail || 'Appointment could not be updated')
+    }
     return r.json()
   },
 
