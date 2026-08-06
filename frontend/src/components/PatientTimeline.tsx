@@ -92,6 +92,17 @@ function MessageBubble({ msg }: { msg: Message }) {
               <Radio size={8} /> {channelLabel(msg.channel)}
             </span>
           )}
+          {isClinic && msg.delivery_status === 'accepted' && (
+            <span className="text-amber-600">Meta accepted · awaiting delivery</span>
+          )}
+          {isClinic && ['sent', 'delivered', 'read'].includes(msg.delivery_status || '') && (
+            <span className="text-emerald-600 capitalize">{msg.delivery_status}</span>
+          )}
+          {isClinic && msg.delivery_status === 'failed' && (
+            <span className="text-red-600" title={msg.delivery_error || 'WhatsApp delivery failed'}>
+              Not sent{msg.delivery_error ? ` · ${msg.delivery_error}` : ''}
+            </span>
+          )}
           {msg.reason && msg.reason !== 'null' && (
             <span className={`px-1.5 rounded-full font-medium ${
               isClinic ? reasonStyle[msg.reason] || 'bg-slate-100 text-slate-500' : 'bg-emerald-700 text-white'}`}>

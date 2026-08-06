@@ -113,6 +113,12 @@ rule-based intent detector matches.
   is the only one of the four that can be told what language the patient is
   speaking**; the other three run in English mode on Twi and Pidgin audio by
   necessity, not by our choice.
+  **Caveat that must survive into the report:** documented ≠ shipped. Intron
+  confirmed the **Akan–English code-switch pair** had not shipped at time of
+  testing (rolling out the week of 10 Aug 2026), and the monolingual `tw` model
+  returns an empty transcript on Twi–English speech while the `en` hint yields
+  usable text. Hence two Sahara rows (`sahara`, `sahara_en`) — the language hint
+  moves the result more than the model choice does.
   *Measured 3 Aug 2026 via `probe_languages.py`:* Cartesia returns explicit
   `HTTP 400: invalid language: tw` (likewise `ak`, `pcm`, `gaa`) while accepting
   `en` and `sw` — the only African language it takes is Swahili. Cite the

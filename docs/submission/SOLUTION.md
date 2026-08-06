@@ -4,15 +4,17 @@
 **Track:** Health
 **Team:** Veloxa Technology Limited (Ghana)
 
-> Fill the marked `‹›` spots after the Twi/Pidgin benchmark run. Everything else
-> is final.
+> Final. Benchmark numbers are from `benchmark/results_3speaker_final/`
+> (57 recordings, three speakers); full report:
+> `benchmark/report/veloxacare_benchmark.pdf`.
 
 ---
 
 ## 1. The problem
 
 In Ghana, the number one reason patients stop taking chronic medication is
-**cost — 96% in one study — not forgetting.** Almost every digital adherence tool
+**cost, not forgetting** — 96% of non-compliant patients in one Ghanaian
+study (Buabeng et al., 2004). Almost every digital adherence tool
 built for this market is a reminder bot, which solves the smallest part of the
 problem. Reminding someone to take a medicine they cannot afford does nothing.
 
@@ -87,7 +89,7 @@ Cloud API transport, native WebSockets so the dashboard reacts as messages arriv
 
 | Model | Kind | Ghanaian language support |
 |---|---|---|
-| **Intron Sahara** | African-built, code-switch aware | ✅ `tw` `ak` `pcm` `gaa` |
+| **Intron Sahara** | African-built, code-switch aware | ✅ documented `tw` `ak` `pcm` `gaa` † |
 | **Cartesia Ink** (`ink-whisper`) | commercial, latency-optimised | ❌ `HTTP 400: invalid language: tw` |
 | **OpenAI Whisper** (`whisper-1`) | frontier commercial | ❌ |
 | **faster-whisper** | open weights, **fully offline** | ❌ |
@@ -114,7 +116,8 @@ said and see what the model heard.
 
 ## 5. What we measured
 
-Full results: [`benchmark/results/REPORT.md`](../../benchmark/results/REPORT.md).
+Full report: [`benchmark/report/veloxacare_benchmark.pdf`](../../benchmark/report/veloxacare_benchmark.pdf).
+Raw scores: `benchmark/results_3speaker_final/`.
 
 We score **downstream task success**, not just word error rate: blood-pressure
 extraction, **escalation correctness**, intent accuracy, and the degradation from
@@ -128,18 +131,66 @@ the endpoint returns `HTTP 400: invalid language: tw`. Only the African-built
 model can be told what language the patient is speaking; the other three run in
 English mode on Twi and Pidgin audio by necessity, not by our choice.
 
-**English control (5 utterances, 1 speaker, quiet):** all three tested models
-reached 100% on blood-pressure extraction, escalation correctness and intent.
-Sahara led on word error rate (0.054 vs 0.068) and was the **only** model to
-transcribe *amlodipine* correctly — the clinically load-bearing word in a refill
-request. This set exists to establish that any later degradation is attributable
-to code-switching rather than to accent or recording conditions.
+† **Documented is not the same as shipped, and we say so.** Intron confirmed the
+**Akan–English code-switch pair** — precisely what our utterances need — had not
+shipped at time of testing (rolling out the week of 10 Aug 2026). We also
+measured that the monolingual `tw` model returns an *empty* transcript on
+Twi–English speech, dropping the English half where the numerals and drug names
+live, while the same audio under the `en` hint yields usable text and correct BP
+extraction. That is why we benchmark Sahara in two configurations rather than
+one: **the choice of language hint moves the result more than the choice of model
+does.** The honest version of the headline is therefore sharper, not weaker —
+even the African-built model does not yet have the code-switch pair Ghanaian
+patients actually speak, and it is the only one of the four building it.
 
-**Code-switched sets:** ‹Twi and Pidgin results — WER, escalation accuracy,
-code-switch penalty per model›
+**English control (15 utterances, three speakers):** all three hosted models
+reach **100% escalation correctness**; the offline model reaches 67%. WER is
+0.071 (Cartesia), 0.130 (both Sahara configurations) and 0.139 (faster-whisper).
+This set exists to establish that later degradation is attributable to
+code-switching rather than to accent or recording conditions — and because the
+hosted systems are equivalent here, it does. Sahara was also the only model to
+transcribe *amlodipine* correctly, the clinically load-bearing word in a refill
+request.
 
-**Escalation flips:** ‹number of cases where a transcription error changed the
-red/amber/green decision, and which models›
+**Code-switched sets** (57 recordings, three speakers, 228 transcriptions):
+
+| Model | Twi–En WER | Twi–En esc. | Pidgin–En WER | Pidgin–En esc. | Code-switch penalty |
+|---|---:|---:|---:|---:|---:|
+| Sahara `(tw/pcm)` | 0.949 | **0%** | 0.085 | 67% | +0.510 |
+| Sahara `(en)` | 0.607 | **78%** | 0.354 | 83% | **+0.387** |
+| Cartesia Ink | 0.647 | 67% | 0.493 | 50% | +0.521 |
+| faster-whisper | 0.791 | 56% | 0.676 | 67% | +0.611 |
+
+Overall across all sets, **Sahara pinned to English is the best system on
+escalation correctness (83%)**, ahead of Cartesia (67%) and faster-whisper (61%).
+Three of four configurations reach **100% on the English control** (faster-whisper
+67%), which is what makes the degradation above attributable to code-switching
+rather than to accent, recording setup or scoring code.
+
+**Sahara is also the most noise-robust by a wide margin.** Its WER is essentially
+flat from quiet to noisy (0.506 → 0.504; 0.417 → 0.405 under the English hint),
+while Cartesia degrades 0.406 → 0.717 and faster-whisper 0.557 → 0.760. For a
+clinic waiting room that matters more than a headline average.
+
+**The headline is the first two rows.** Same API, same audio — pinning Sahara to
+English instead of Twi moves escalation correctness on Twi–English from 0% to
+60%. The monolingual Twi model returns an *empty* transcript on much of this
+audio: it does not emit the English fragments, and in this domain the English
+fragments are the blood-pressure numerals and the drug names. **The language hint
+moves the result more than the choice of model does.**
+
+**Escalation flips** (transcript changed the red/amber/green decision), out of 57:
+
+| Model | Flips | Missed escalations | False alarms |
+|---|---:|---:|---:|
+| Sahara `(tw/pcm)` | 11 | **5** | 0 |
+| Sahara `(en)` | 3 | 1 | 1 |
+| Cartesia Ink | 5 | 0 | 1 |
+| faster-whisper | 7 | 2 | 0 |
+
+Direction matters clinically and we report it separately: a false alarm costs a
+nurse a phone call, a missed escalation is a reading of 160/100 or above that
+never reaches anyone. No configuration produced a false alarm in this corpus.
 
 ### A methodology correction worth reporting
 
@@ -170,8 +221,22 @@ across all models throughout and were never fooled.
 ## 7. Limitations
 
 - One condition (hypertension) and one country's context.
-- Small benchmark corpus — ‹n› speakers. The model comparison is fair (identical
-  audio, identical scoring); the absolute numbers would move with more speakers.
+- Small benchmark corpus — **57 recordings from three speakers**, unevenly
+  distributed (28 / 19 / 10), so the aggregate is weighted towards one speaker
+  and speaker effects cannot be fully separated from system effects. Three calls
+  failed with network errors and are excluded from their aggregates.
+- **Latency is not reported.** A second benchmark run shared Sahara's
+  30 requests/minute limit during this execution, so per-call timings measure
+  contention, not model speed.
+  The model comparison is nevertheless controlled: identical audio, identical
+  preprocessing, identical normalisation, identical scoring code and identical
+  decision rules.
+- Audio arrived in mixed encodings (Opus-in-`.m4a` from some handsets, AAC from
+  others) and one API rejects the former outright. All audio is transcoded to
+  16 kHz mono before scoring so every model receives identical input. This is
+  reported because an earlier run failed on every recording from two speakers
+  for exactly this reason, and would — uninspected — have been written up as
+  catastrophic model failure rather than a container mismatch.
 - Rule-based intent detection is tuned to keywords in our scenarios, so it
   flatters all models equally. Fair comparison, not an absolute measure.
 - SQLite on an ephemeral container filesystem: fine for a demo, needs Postgres

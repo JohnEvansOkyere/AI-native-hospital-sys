@@ -13,7 +13,8 @@ management in Ghana. Built as a *self-contained, demo-able system* that doubles 
 the foundation for a real pilot. The current target condition is **hypertension**.
 
 The core insight driving the product: in Ghana, the #1 reason patients stop taking
-chronic medication is **cost (96% in one study), not forgetting**. So the bot does
+chronic medication is **cost, not forgetting** (96% of non-compliant patients in
+one Ghanaian study, Buabeng et al. 2004). So the bot does
 not just track yes/no adherence — it detects *why* a patient slipped (cost / forgot /
 side-effect / ran out) and routes each reason to a different action. Cost barriers
 escalate to the care team and trigger an NHIS-covered-alternative workflow. This is

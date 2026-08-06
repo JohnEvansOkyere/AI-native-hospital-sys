@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -39,6 +40,26 @@ MIME_SUFFIX = {
     "audio/amr": ".amr",
     "audio/aac": ".m4a",
 }
+
+
+@dataclass(frozen=True)
+class SendResult:
+    """What Meta accepted, without exposing credentials or patient details."""
+
+    delivered: bool
+    message_id: str = ""
+    error: str = ""
+
+
+def _meta_error(response: httpx.Response) -> str:
+    """Return the useful, operator-safe part of a Graph API error."""
+    try:
+        error = response.json().get("error") or {}
+        message = str(error.get("message") or "WhatsApp rejected the message")
+        code = error.get("code")
+        return f"Meta {code}: {message}" if code else message
+    except Exception:
+        return f"WhatsApp HTTP {response.status_code}"
 
 
 def is_configured() -> bool:
@@ -78,33 +99,61 @@ def verify_challenge(mode: str | None, token: str | None, challenge: str | None)
     raise ValueError("verify token mismatch")
 
 
-async def send_text(to: str, body: str) -> bool:
-    """Send a plain text WhatsApp message. Never raises — a failed send must not
-    take down the webhook, or Meta will retry the whole delivery."""
+async def _send_message(to: str, payload: dict) -> SendResult:
+    """Send one Cloud API message and preserve Meta's message id or failure."""
     if not is_configured():
         logger.warning("WhatsApp not configured; dropping reply to %s", mask_phone(to))
-        return False
+        return SendResult(False, error="WhatsApp credentials are not configured")
 
     url = f"{GRAPH_API}/{os.getenv('META_PHONE_NUMBER_ID')}/messages"
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": body, "preview_url": False},
-    }
+    payload = {"messaging_product": "whatsapp", "to": normalize_phone(to), **payload}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 url, json=payload, headers={**_auth_headers(), "Content-Type": "application/json"}
             )
             resp.raise_for_status()
-        return True
+        messages = resp.json().get("messages") or []
+        message_id = str(messages[0].get("id") or "") if messages else ""
+        return SendResult(True, message_id=message_id)
     except httpx.HTTPStatusError as e:
+        error = _meta_error(e.response)
         logger.error("WhatsApp send failed to %s: %s — %s",
                      mask_phone(to), e, e.response.text[:200])
+        return SendResult(False, error=error)
     except httpx.HTTPError as e:
         logger.error("WhatsApp HTTP error to %s: %s", mask_phone(to), e)
-    return False
+        return SendResult(False, error=f"WhatsApp connection failed: {type(e).__name__}")
+
+
+async def send_text_result(to: str, body: str) -> SendResult:
+    """Send free text and return the accepted message id or failure reason."""
+    return await _send_message(to, {
+        "type": "text",
+        "text": {"body": body, "preview_url": False},
+    })
+
+
+async def send_text(to: str, body: str) -> bool:
+    """Compatibility wrapper used by reply paths that only need success/failure."""
+    return (await send_text_result(to, body)).delivered
+
+
+async def send_template(
+    to: str, template_name: str, language_code: str = "en_US",
+    body_parameters: list[str] | None = None,
+) -> SendResult:
+    """Send an approved WhatsApp template for clinic-initiated outreach."""
+    template: dict = {
+        "name": template_name,
+        "language": {"code": language_code},
+    }
+    if body_parameters:
+        template["components"] = [{
+            "type": "body",
+            "parameters": [{"type": "text", "text": value} for value in body_parameters],
+        }]
+    return await _send_message(to, {"type": "template", "template": template})
 
 
 async def send_audio(to: str, audio: bytes, mime: str, filename: str) -> bool:
@@ -145,7 +194,7 @@ async def send_audio(to: str, audio: bytes, mime: str, filename: str) -> bool:
                 headers={**_auth_headers(), "Content-Type": "application/json"},
                 json={
                     "messaging_product": "whatsapp",
-                    "to": to,
+                    "to": normalize_phone(to),
                     "type": "audio",
                     "audio": {"id": media_id},
                 },

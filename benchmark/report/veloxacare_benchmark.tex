@@ -1,0 +1,425 @@
+% VeloxaCare code-switch STT benchmark report
+% Compile with XeLaTeX (the Twi orthography needs U+025B and U+0254):
+%   xelatex veloxacare_benchmark.tex
+\documentclass[a4paper,10pt,twocolumn]{article}
+
+\usepackage{fontspec}
+\setmainfont{Linux Libertine O}
+\newfontfamily\twifont{DejaVu Serif}[Scale=0.92]
+\newcommand{\twi}[1]{{\twifont #1}}
+
+\usepackage[margin=1.75cm,columnsep=0.6cm]{geometry}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{microtype}
+\usepackage{xcolor}
+\definecolor{linkblue}{RGB}{20,60,130}
+\usepackage[colorlinks=true,allcolors=linkblue]{hyperref}
+
+\captionsetup{font=small,labelfont=it,textfont=it}
+\setlength{\parskip}{0pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{4pt}
+
+\begin{document}
+\twocolumn[
+\begin{@twocolumnfalse}
+\begin{center}
+{\LARGE\bfseries Beyond Word Error Rate: Task-Success Benchmarking of
+Code-Switched Twi--English and Pidgin--English Speech for a Clinical Agent\par}
+\vspace{0.4cm}
+{\large John Evans Okyere\par}
+\vspace{0.12cm}
+{Veloxa Technology Limited, Accra, Ghana\par}
+\end{center}
+\vspace{0.4cm}
+
+\begin{abstract}
+\noindent
+Speech recognition for African languages is normally reported as word error rate
+(WER). In a deployed clinical agent, what matters is not the transcript but the
+action it produces. We benchmark code-switched Ghanaian clinical speech ---
+Twi--English and Pidgin--English --- on downstream task success: blood-pressure
+extraction, escalation correctness under a fixed clinical rule, and intent. The
+harness imports the production speech layer of a deployed WhatsApp chronic-care
+agent, so the systems measured are the systems serving patients. Across an
+African-built API (Intron Sahara, in two language-hint configurations), a
+commercial API (Cartesia Ink) and an offline open-weights model
+(faster-whisper), we find that \emph{the language hint given to a model changes
+downstream accuracy more than the choice of model does}, and that its effect is
+opposite in the two Ghanaian languages: the \texttt{pcm} hint makes Sahara the
+strongest system on Pidgin--English by a wide margin (WER 0.085, intent 93\%),
+while the \texttt{tw} hint returns empty transcripts on 16 of 27 Twi--English
+utterances and drives escalation correctness to zero. Pinning the same API to
+English instead recovers 78\% on Twi--English. We report escalation failures by
+direction, since a missed escalation and a false alarm are not equivalent harms.
+\end{abstract}
+
+\vspace{2pt}
+\noindent\textbf{Index Terms}: speech recognition, code-switching, low-resource
+languages, Twi, Ghanaian Pidgin, task-based evaluation, digital health
+\vspace{0.45cm}
+\end{@twocolumnfalse}
+]
+
+\section{Introduction}
+
+In a deployed clinical agent no clinician reads the transcript. What reaches a
+human is an \emph{action}: a blood-pressure reading recorded against a patient,
+an escalation raised to a nurse, a refill routed to a pharmacy. A benchmark that
+stops at WER measures the intermediate artefact, not the thing the system is for.
+
+This matters acutely in West African clinical speech, which is routinely
+code-switched. Ghanaian patients mix Twi or Ghanaian Pidgin with English, and the
+clinically load-bearing tokens --- numerals and drug names --- are almost always
+spoken in English inside an otherwise non-English utterance. A model can
+therefore mis-transcribe most of a sentence and still produce the correct action,
+or transcribe most of it correctly and destroy the action.
+
+We contribute a task-success harness that scores blood-pressure extraction,
+escalation correctness and intent alongside WER and CER, and which \emph{imports
+the production speech layer} rather than reimplementing it; a consented,
+de-identified corpus of Ghanaian code-switched clinical utterances; and a
+four-configuration comparison spanning an African-built API, a commercial API and
+an open-weights model running fully offline on CPU.
+
+\section{System and task}
+
+VeloxaCare receives patient messages over WhatsApp as text or voice notes. A
+speech layer transcribes voice; a rule-based component then extracts structured
+content and decides what happens next.
+
+Escalation is deliberately \emph{not} model-driven. A systolic reading
+$\geq 160$ or diastolic $\geq 100$ escalates immediately; a reported cost barrier
+or side effect escalates after two occurrences within fourteen days. Language
+models structure, classify and summarise; they never diagnose and never decide
+escalation. That boundary is a medical-safety requirement, and it is what makes
+this benchmark meaningful: because the decision rule is fixed and identical
+across systems, any difference in escalation outcome is attributable to the
+transcript alone.
+
+The corpus contains a deliberate minimal pair. \twi{``Me BP yɛ one-sixteen over
+seventy-eight''} is 116/78 and green; \emph{``one-sixty over one hundred''} is
+160/100 and red. One vowel separates a routine reading from an immediate
+escalation.
+
+\section{Data}
+
+\textbf{Source.} Twenty-one scripted scenarios, written to cover the intents the
+agent actually handles: adherence confirmation, cost barrier, forgetting, side
+effect, running out, blood-pressure reporting, booking, rescheduling and refills.
+The scenario file is the single source of truth from which the scoring reference
+is generated; hand-editing the reference is prohibited, because text that drifts
+from what speakers read makes every WER figure meaningless.
+
+\textbf{Languages.} Three sets: \textbf{E}, five Ghanaian-accented English
+controls; \textbf{T}, nine Twi--English; \textbf{P}, five Pidgin--English.
+Numerals and drug names remain in English in every set --- this is what Ghanaian
+speakers do, and it is precisely the code-switch boundary under test. Drug names
+(\emph{amlodipine}, \emph{lisinopril}, \emph{nifedipine}) and blood-pressure
+values therefore sit inside Twi or Pidgin matrix sentences.
+
+\textbf{Size.} Three consented speakers, recorded on personal handsets, giving
+\textbf{57 recordings totalling 5.3 minutes} (0.088\,h; mean utterance 5.6\,s),
+scored across four configurations for \textbf{228 transcriptions}. Coverage is
+uneven --- 28, 19 and 10 recordings per speaker --- and splits 15 English,
+27 Twi--English, 15 Pidgin--English; 48 quiet and 9 with ambient noise. Three
+calls failed with network \texttt{ConnectionError}s and are excluded from their
+aggregates. This is a small corpus and no absolute figure here should be read as
+a general claim about Ghanaian speech; what it supports is a controlled
+comparison, since every configuration receives identical audio, preprocessing,
+normalisation, scoring code and decision rules.
+
+\textbf{Preprocessing.} Audio arrived in mixed encodings --- some handsets
+produce Opus in an \texttt{.m4a} container, others AAC --- and one API rejects
+the former outright. All audio is transcoded to 16\,kHz mono AAC before scoring
+so every system receives identical input. We report this because an earlier run
+failed on every recording from two speakers for exactly this reason and would,
+uninspected, have been written up as catastrophic model failure rather than a
+container mismatch. Reference and hypothesis text are normalised identically
+before scoring: lower-cased, punctuation stripped, number words converted to
+digits, and blood-pressure notation canonicalised so that \texttt{142/95} and
+``142 over 95'' collapse to the same form.
+
+\section{Models}
+
+\textbf{Intron Sahara} is an African-built ASR API whose documented input
+languages include Twi (\texttt{tw}), Akan (\texttt{ak}), Ghanaian Pidgin
+(\texttt{pcm}) and Ga (\texttt{gaa}). We evaluate two configurations:
+\textbf{sahara}, sending the set's non-English code, and \textbf{sahara\_en},
+pinning the English model regardless of what is spoken.
+
+\textbf{Cartesia Ink} (\texttt{ink-whisper}) is a latency-optimised commercial
+ASR service, accessed over the network with an API key. \textbf{faster-whisper}
+(\texttt{base}) is the only system here that is not a hosted service: it runs
+Whisper's openly released weights locally on CPU, with no key and no network.
+
+Probing each endpoint with every language code, rather than trusting
+documentation, produced the cleanest result in the study. Cartesia returns an
+explicit \texttt{HTTP 400: invalid language} for \texttt{tw}, \texttt{ak},
+\texttt{pcm} and \texttt{gaa} while accepting \texttt{en} and \texttt{sw}: the
+only African language it takes is Swahili. Whisper's languages contain none of
+the four. Of the systems tested, only the African-built one can be told what
+language a Ghanaian patient is speaking.
+
+Documented is not the same as shipped, and we state this plainly. Intron
+confirmed that the \emph{Akan--English code-switch pair} --- the configuration
+these utterances actually require --- had not shipped at the time of testing, and
+was rolling out in the week of 10 August 2026.
+
+\section{Evaluation metrics}
+
+We report \textbf{WER} and \textbf{CER}. CER matters here because code-switched
+transcripts are frequently right about content and wrong about word boundaries;
+WER charges a full error for a token split that CER shows to be a near miss.
+
+We then score what the agent does with the transcript. \textbf{BP extraction
+accuracy} asks whether the systolic/diastolic pair recovered matches the
+reference. \textbf{Escalation correctness} --- our headline --- asks whether the
+transcript drives the same green/amber/red decision under the fixed clinical
+rule; it is the only metric corresponding to a patient outcome. \textbf{Intent
+accuracy} asks whether the agent takes the right action. The intent scorer is
+rule-based and identical for every system, so it is a fair comparison even where
+it is an imperfect absolute measure.
+
+These metrics are appropriate here because the system is autonomous between the
+patient and the nurse. No human reads the transcript before an escalation is
+raised or withheld, so transcript-level metrics alone cannot establish whether
+the system is safe.
+
+Latency is not reported. A second benchmark run shared Sahara's
+30\,requests/minute limit during this execution, so per-call timings measure
+contention rather than model speed; publishing them would mislead.
+
+\section{Results}
+
+\begin{table}[t]
+\centering\small
+\caption{Overall, 57 recordings, three speakers.}
+\label{tab:overall}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Model & WER & CER & BP & Esc. & Intent \\
+\midrule
+Sahara \texttt{(tw/pcm)} & 0.506 & 0.456 & 33\% & 39\% & 51\% \\
+Sahara \texttt{(en)} & 0.415 & \textbf{0.240} & 67\% & \textbf{83\%} & 75\% \\
+Cartesia Ink & 0.455 & 0.257 & 61\% & 67\% & 75\% \\
+faster-whisper & 0.589 & 0.356 & 56\% & 61\% & 61\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering\small
+\caption{WER / CER per language set.}
+\label{tab:wercer}
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+& \multicolumn{2}{c}{English} & \multicolumn{2}{c}{Twi--En} & \multicolumn{2}{c}{Pidgin--En} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+Model & WER & CER & WER & CER & WER & CER \\
+\midrule
+Sahara \texttt{(tw/pcm)} & 0.130 & 0.045 & 0.949 & 0.887 & \textbf{0.085} & \textbf{0.066} \\
+Sahara \texttt{(en)} & 0.130 & 0.045 & 0.607 & 0.364 & 0.354 & 0.197 \\
+Cartesia Ink & \textbf{0.071} & \textbf{0.041} & 0.647 & 0.378 & 0.493 & 0.256 \\
+faster-whisper & 0.139 & 0.080 & 0.791 & 0.476 & 0.676 & 0.418 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering\small
+\caption{Downstream task success per language set, as BP extraction /
+escalation correctness / intent (\%).}
+\label{tab:task}
+\setlength{\tabcolsep}{2.6pt}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Model & English & Twi--En & Pidgin--En \\
+\midrule
+Sahara \texttt{(tw/pcm)} & 67/100/93 & \textbf{0/0/4} & 67/67/\textbf{93} \\
+Sahara \texttt{(en)} & 67/100/93 & 56/\textbf{78}/78 & \textbf{83/83}/53 \\
+Cartesia Ink & \textbf{100/100/100} & 56/67/78 & 50/50/47 \\
+faster-whisper & 67/67/93 & 56/56/59 & 50/67/33 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{The English control.} Three of four configurations reach 100\% escalation
+correctness on Ghanaian-accented English (Table~\ref{tab:task}); the offline
+model reaches 67\%. Because the hosted systems are equivalent here, their
+degradation on the code-switched sets is attributable to code-switching rather
+than to accent, recording conditions or scoring code.
+
+\textbf{Code-switch penalty} (mean WER on code-switched audio minus WER on the
+English control): $+0.387$ for Sahara\,\texttt{(en)}, $+0.510$ for
+Sahara\,\texttt{(tw/pcm)}, $+0.521$ for Cartesia, $+0.611$ for faster-whisper.
+Every system degrades; the African-built model under an English hint degrades
+least.
+
+\textbf{Noise.} Sahara is markedly the most robust. Its WER is essentially
+unchanged from quiet to noisy (0.506 to 0.504; 0.417 to 0.405 under the English
+hint), while Cartesia degrades from 0.406 to 0.717 and faster-whisper from 0.557
+to 0.760. For a clinic waiting room this matters more than a headline average.
+
+\textbf{Escalation failures by direction.} Aggregate accuracy hides a clinically
+important asymmetry. Across 57 utterances, Sahara\,\texttt{(tw/pcm)} produced 11
+escalation flips, \textbf{five of them missed escalations} --- a reference-red
+reading that did not escalate --- and no false alarms. Sahara\,\texttt{(en)}
+produced 3 flips (1 missed, 1 false alarm), Cartesia 5 flips (0 missed, 1 false
+alarm) and faster-whisper 7 flips (2 missed). These are not equivalent harms: a
+false alarm costs a nurse a phone call; a missed escalation is a reading of
+160/100 or above that never reaches anyone.
+
+\section{Qualitative findings}
+
+\textbf{Sahara \texttt{(tw/pcm)}: excellent on Pidgin, silent on Twi.} The
+aggregate hides two opposite behaviours. With the \texttt{pcm} hint this is the
+best system in the study on Pidgin--English, and the only one that preserves
+Pidgin rather than Anglicising it:
+
+\begin{quote}\small
+\textsc{ref}\ \ \emph{``I no fit buy the medicine, e cost too much for me this month.''}\\[2pt]
+\textsc{sahara(pcm)}\ \ ``I no fit buy the medicine, e cost too much for me.''\\[2pt]
+\textsc{cartesia}\ \ ``I know if you buy the medicine, it costs two months for me\ldots''\\[2pt]
+\textsc{f-whisper}\ \ ``I don't feel bad about medicine, it costs too much\ldots''
+\end{quote}
+
+\noindent
+Cartesia's rendering inverts the meaning: ``I no fit buy'' (I cannot afford)
+becomes ``I know if you buy''. The cost barrier --- the single most important
+signal this product detects --- is destroyed. Sahara keeps it, and scores 93\%
+intent on Pidgin against Cartesia's 47\%.
+
+With the \texttt{tw} hint the same API returns an \textbf{empty transcript on 16
+of 27 Twi--English utterances}, and on 0 of 15 Pidgin ones. It is not mishearing
+the English fragments; it does not emit them. Since those fragments carry the
+numerals and drug names, every downstream metric collapses: 0\% BP, 0\%
+escalation, 4\% intent.
+
+\textbf{Sahara \texttt{(en)}: the best all-round configuration.} Pinning English
+recovers Twi--English to 78\% escalation correctness and gives the best overall
+CER (0.240) and escalation (83\%). It pays for this on Pidgin intent (53\%
+against 93\% under \texttt{pcm}), because the English model normalises Pidgin
+into standard English and the rule-based intent detector loses its keywords.
+
+\textbf{Cartesia Ink: strongest on English, weakest on Pidgin.} Best English WER
+(0.071) and no missed escalations, but it cannot be told a Ghanaian language
+exists, and on Pidgin it falls to 50\% BP and 47\% intent. It also degrades most
+under noise. A representative failure: \emph{``I check my BP for house''} became
+\emph{``I checked my BB for halves''}.
+
+\textbf{faster-whisper: weakest, but free and offline.} Highest WER and CER in
+every set, and it drops digits --- on one Pidgin utterance it rendered 138/89 as
+``38 over 89'', silently losing the leading digit of a systolic reading. It is
+nonetheless the only configuration that runs with no key, no network and no cost.
+
+\textbf{The minimal pair.} On the 116/78 utterance no system recovered both
+numbers; on the 160/100 utterance three of four recovered it exactly. The green
+reading is the harder one, and errors there manufacture escalations rather than
+suppress them.
+
+\begin{table}[t]
+\centering\small
+\caption{Summary of strengths and weaknesses.}
+\label{tab:proscon}
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabular}{@{}p{1.5cm}p{2.55cm}p{2.55cm}@{}}
+\toprule
+Model & Strengths & Weaknesses \\
+\midrule
+Sahara \texttt{(tw/pcm)} &
+Best Pidgin WER/CER and intent of any system; preserves Pidgin rather than
+Anglicising it; noise-robust; only API accepting Ghanaian codes &
+\texttt{tw} returns empty transcripts on 16/27 Twi utterances; most missed
+escalations (5); Akan--English pair not yet shipped \\
+\addlinespace
+Sahara \texttt{(en)} &
+Best overall CER and escalation (83\%); smallest code-switch penalty;
+noise-robust &
+Anglicises Pidgin, costing intent accuracy (53\%); one missed escalation and one
+false alarm \\
+\addlinespace
+Cartesia Ink &
+Best English WER/CER; no missed escalations &
+Rejects all four Ghanaian codes; inverts Pidgin meaning; worst noise
+degradation; weakest Pidgin task success \\
+\addlinespace
+faster-whisper &
+No key, no network, no cost; fully offline; viable fallback &
+Weakest on every metric; drops digits in BP readings; only system below 100\% on
+the English control \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Discussion}
+
+\textbf{The language hint dominates the model choice --- in both directions.} The
+largest effect in this study is not which system was used but what it was told,
+and the sign of that effect flips between the two Ghanaian languages. The
+\texttt{pcm} hint takes Sahara from mid-table to best-in-study on Pidgin. The
+\texttt{tw} hint takes the same API to zero on Twi. A benchmark that tested one
+hint, or averaged the two languages together, would have reported neither.
+
+This reframes the result for practitioners: the right deployment is not one model
+but a per-language routing policy, and choosing it requires exactly the
+per-language task-success measurement reported here.
+
+\textbf{WER and task success disagree in both directions.} In an earlier run
+Sahara scored worst on WER until we inspected the transcripts: it had heard
+\emph{``one forty-two over ninety-five''} and written \texttt{142/95},
+recognising a blood pressure, while others wrote \texttt{142 over 95}. Our
+normaliser counted one token against three, and WER punished the system that had
+understood best; after canonicalising BP notation it moved from worst to best,
+with nothing about the audio or models changed. The converse also occurs: we
+observed \emph{``medicine''} transcribed as \emph{``men's son''} --- badly wrong
+by any string metric --- while the cost intent was still detected and the patient
+routed correctly. CER exposes part of the gap that WER hides, which is why we
+report both.
+
+\textbf{Offline operation degrades but does not collapse.} The open-weights
+configuration is weakest on every metric, yet still recovers the correct
+escalation on 61\% of utterances with no key, no network and no cost. That is not
+good enough to be the primary path, but it is the right floor: when a clinic's
+connection drops, the agent keeps making correct decisions on most messages
+instead of none.
+
+\section{Ethics, inclusion and limitations}
+
+All utterances are scripted; no real patient data was used. Written consent was
+obtained from every speaker before recording, with a separate opt-in for
+releasing audio. Speakers are identified only by code, never by name. Voice notes
+in the production system are stored under generated filenames.
+
+The corpus is small --- three speakers, 5.3 minutes --- and unevenly distributed
+(28/19/10 recordings), so the aggregate is weighted towards one speaker and
+speaker effects cannot be fully separated from system effects; the
+escalation-flip counts rest on modest denominators. The rule-based intent scorer
+is tuned to these scenarios and flatters every system equally; it measures
+relative performance, not absolute agent quality. The Twi scripts were drafted
+and revised by non-native speakers and carry outstanding review questions, so
+native-speaker sign-off is required before these figures are cited as a general
+claim about Twi ASR. We would rather state these limits than have a reader find
+them.
+
+\section{Conclusion}
+
+Three results carry beyond this corpus. The language hint given to a model
+changed downstream accuracy more than the choice of model did, and in opposite
+directions for Twi and Pidgin --- so the deployable answer is a per-language
+routing policy, not a single winner. WER can rank the most clinically useful
+transcript last and can penalise errors that change nothing, while escalation
+correctness was never fooled. And escalation errors must be reported by
+direction, because a missed escalation and a false alarm are not equivalent
+harms.
+
+The practical implication is that code-switching must be evaluated explicitly. A
+system that performs well on monolingual Twi and well on monolingual English can
+still fail on the utterances patients actually produce --- and fail in the
+direction that matters, by dropping the numbers.
+
+\end{document}

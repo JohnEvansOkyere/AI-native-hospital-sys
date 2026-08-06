@@ -3,7 +3,8 @@
 **A WhatsApp voice agent for chronic-disease care in Ghana — that hears how Ghanaians actually speak.**
 
 In Ghana, the number one reason patients stop taking chronic medication is
-**cost, not forgetting** — 96% in one study. So VeloxaCare doesn't just track
+**cost, not forgetting** — 96% of non-compliant patients in one Ghanaian study
+(Buabeng et al., 2004). So VeloxaCare doesn't just track
 yes/no adherence. It detects *why* a patient slipped — cost, forgot,
 side-effect, ran out — and routes each reason to a different action. Cost
 barriers escalate to the care team and trigger an NHIS-covered-alternative
@@ -55,10 +56,16 @@ degradation from English to code-switched speech.
 
 | Model | Kind | Ghanaian language support |
 |---|---|---|
-| Intron Sahara | African-built | ✅ `tw` `ak` `pcm` `gaa` |
+| Intron Sahara | African-built | ✅ documented: `tw` `ak` `pcm` `gaa` † |
 | Cartesia Ink | commercial | ❌ measured: `400 invalid language: tw` |
 | OpenAI Whisper | commercial | ❌ |
 | faster-whisper | open weights, **offline** | ❌ |
+
+† Documented ≠ shipped. Intron confirmed the **Akan–English code-switch pair**
+— the thing these utterances actually need — had not shipped at time of testing
+(rolling out the week of 10 Aug 2026), and the monolingual `tw` model returns an
+empty transcript on Twi–English speech. Recognition of Ghanaian languages leads
+synthesis of them, but the *code-switch* pairs are still arriving.
 
 Only the African-built model can be told what language the patient is speaking.
 The other three run in English mode on Twi and Pidgin audio by necessity, not by

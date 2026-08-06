@@ -26,6 +26,14 @@ export interface Patient {
   escalations: Escalation[]
   recent_resolutions: Escalation[]
   current_flow: string
+  /** Present only on the enrollment response; reports the real Meta send attempt. */
+  welcome_delivery?: {
+    delivered: boolean
+    channel: string
+    mode: 'template' | 'free_text'
+    message_id: string
+    note: string
+  }
 }
 
 export interface Message {
@@ -46,6 +54,10 @@ export interface Message {
   tts_provider?: string | null
   tts_voice?: string | null
   tts_latency_ms?: number | null
+  /** Meta lifecycle for outbound WhatsApp: accepted → sent → delivered/read, or failed. */
+  delivery_status?: 'accepted' | 'sent' | 'delivered' | 'read' | 'failed' | null
+  delivery_error?: string | null
+  external_message_id?: string | null
 }
 
 /** Benchmark language_pair codes — a hint to the model, not a constraint on

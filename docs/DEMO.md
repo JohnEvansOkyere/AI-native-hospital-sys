@@ -126,8 +126,11 @@ You can also free-type anything as the patient — try *"I forgot, I was at work
 
 - Chronic-med adherence sits at **50–60%**; **a quarter of new prescriptions are never
   filled.**
-- In a Ghanaian primary-care study, non-compliance was **55.5%**, and **96% blamed
-  cost** — not forgetting. *(This is why reason-detection matters.)*
+- In a Ghanaian hypertension-clinic study (Buabeng et al., 2004, *J Pharm Pharm
+  Sci* 7(3):350–352), **93%** of patients were non-compliant and **96% of those
+  blamed unaffordable drug prices** — not forgetting. Data is from 2001–02, one
+  hospital, pre-NHIS: give the year if challenged. *(This is why reason-detection
+  matters.)*
 - A WhatsApp adherence trial in diabetes/hypertension patients: **67.5% adherent vs
   58.5%** control after 4 months.
 - Daily messaging in care raised odds of staying in care by **~20%**.

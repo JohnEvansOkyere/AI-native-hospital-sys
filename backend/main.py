@@ -323,29 +323,62 @@ async def enroll_patient(body: EnrollRequest):
             )
             await db.commit()
 
-            # Welcome message
+            # Welcome message. A newly enrolled patient is normally outside
+            # WhatsApp's 24-hour service window, so prefer an approved template.
+            # If no template is configured we still try the exact free-text
+            # welcome: that succeeds when the patient recently messaged the
+            # clinic, and otherwise returns Meta's reason to the operator.
             first = display_first_name(body.name)
-            if body.category == "dental":
-                welcome = (
-                    f"Welcome to VeloxaCare, {first}! 👋 I’ll check on your {service_type.lower()} recovery, "
-                    "help with your approved aftercare, and remind you when it is time to return. Reply START to begin."
+            welcome = (
+                f"Welcome to VeloxaCare, {first}! 👋 I’ll help you stay on track "
+                "with your care and follow-up. Reply START to begin."
+            )
+            template_name = os.getenv("META_WELCOME_TEMPLATE", "").strip()
+            template_language = os.getenv("META_WELCOME_TEMPLATE_LANGUAGE", "en_US").strip() or "en_US"
+            if template_name:
+                delivery = await whatsapp.send_template(
+                    body.phone, template_name, template_language, [first],
                 )
-            elif body.category == "eye":
-                welcome = (
-                    f"Welcome to VeloxaCare, {first}! 👋 I’ll check on your eye-care follow-up and remind you about your next visit. Reply START to begin."
-                )
+                delivery_mode = "template"
             else:
-                welcome = (
-                    f"Welcome to VeloxaCare, {first}! 👋 I’ll help you stay on track with your care and follow-up. Reply START to begin."
-                )
+                delivery = await whatsapp.send_text_result(body.phone, welcome)
+                delivery_mode = "free_text"
+
+            channel = "whatsapp" if delivery.delivered else "simulator"
             now = datetime.now().isoformat()
             await db.execute(
-                "INSERT INTO messages (patient_id, direction, body, created_at) VALUES (?,?,?,?)",
-                (pid, "outbound", welcome, now)
+                """INSERT INTO messages
+                   (patient_id, direction, body, created_at, channel, delivery_status,
+                    delivery_error, external_message_id) VALUES (?,?,?,?,?,?,?,?)""",
+                (pid, "outbound", welcome, now, channel,
+                 "accepted" if delivery.delivered else "failed",
+                 delivery.error, delivery.message_id)
             )
             await db.commit()
 
             p = await get_patient_full(pid, db)
+            if delivery.delivered:
+                delivery_note = (
+                    "WhatsApp accepted the approved welcome template; delivery status will update in the conversation."
+                    if delivery_mode == "template"
+                    else "WhatsApp accepted the welcome; delivery status will update in the conversation."
+                )
+            elif template_name:
+                delivery_note = delivery.error or "WhatsApp did not accept the welcome template."
+            elif whatsapp.is_configured():
+                delivery_note = (
+                    f"{delivery.error or 'WhatsApp did not accept the welcome.'} "
+                    "Configure the approved META_WELCOME_TEMPLATE for new patients."
+                )
+            else:
+                delivery_note = "WhatsApp credentials are not configured; welcome saved locally only."
+            p["welcome_delivery"] = {
+                "delivered": delivery.delivered,
+                "channel": channel,
+                "mode": delivery_mode,
+                "message_id": delivery.message_id,
+                "note": delivery_note,
+            }
             await manager.broadcast_all({"type": "patient_enrolled", "patient": p})
             return p
         except Exception as e:
@@ -361,7 +394,8 @@ async def get_messages(patient_id: int, limit: int = 50):
     async with db_store.connect() as db:
         cursor = await db.execute(
             "SELECT id, direction, body, reason, created_at, channel, audio_file, stt_provider, "
-            "stt_language, stt_latency_ms, tts_provider, tts_voice, tts_latency_ms "
+            "stt_language, stt_latency_ms, tts_provider, tts_voice, tts_latency_ms, "
+            "delivery_status, delivery_error, external_message_id "
             "FROM messages WHERE patient_id=? ORDER BY created_at DESC LIMIT ?",
             (patient_id, limit)
         )
@@ -374,6 +408,9 @@ async def get_messages(patient_id: int, limit: int = 50):
                 "stt_language": r[8] or None, "stt_latency_ms": r[9] or None,
                 "tts_provider": r[10] or None, "tts_voice": r[11] or None,
                 "tts_latency_ms": r[12] or None,
+                "delivery_status": r[13] or None,
+                "delivery_error": r[14] or None,
+                "external_message_id": r[15] or None,
             }
             for r in reversed(rows)
         ]
@@ -705,6 +742,46 @@ def _already_handled(message_id: str) -> bool:
     return False
 
 
+async def _record_whatsapp_statuses(statuses: list[dict]) -> int:
+    """Persist Meta's sent/delivered/read/failed receipts for outbound messages."""
+    updates: list[dict] = []
+    async with db_store.connect() as db:
+        for receipt in statuses:
+            message_id = str(receipt.get("id") or "")
+            status = str(receipt.get("status") or "")
+            if not message_id or status not in {"sent", "delivered", "read", "failed"}:
+                continue
+            errors = receipt.get("errors") or []
+            error = ""
+            if errors:
+                first_error = errors[0] or {}
+                title = str(first_error.get("title") or first_error.get("message") or "Delivery failed")
+                code = first_error.get("code")
+                error = f"Meta {code}: {title}" if code else title
+            cursor = await db.execute(
+                "SELECT id, patient_id FROM messages WHERE external_message_id=? LIMIT 1",
+                (message_id,),
+            )
+            row = await cursor.fetchone()
+            if not row:
+                continue
+            await db.execute(
+                "UPDATE messages SET delivery_status=?, delivery_error=? WHERE id=?",
+                (status, error, row[0]),
+            )
+            updates.append({
+                "message_id": row[0], "patient_id": row[1],
+                "delivery_status": status, "delivery_error": error,
+            })
+        await db.commit()
+
+    for update in updates:
+        event = {"type": "message_delivery", **update}
+        await manager.broadcast(update["patient_id"], event)
+        await manager.broadcast_all(event)
+    return len(updates)
+
+
 async def _patient_by_phone(phone: str) -> Optional[dict]:
     """Resolve an inbound WhatsApp number to an enrolled patient.
 
@@ -757,7 +834,8 @@ async def whatsapp_receive(request: Request):
         return {"status": "ignored"}
 
     if "messages" not in value:
-        return {"status": "no_message"}       # delivery receipts, read status, etc.
+        updated = await _record_whatsapp_statuses(value.get("statuses") or [])
+        return {"status": "delivery_updated" if updated else "no_message", "updated": updated}
 
     message = value["messages"][0]
     message_id = message.get("id", "")
@@ -858,17 +936,21 @@ async def send_care_team_message(patient_id: int, body: str, db: Connection) -> 
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    delivered = False
+    delivery = whatsapp.SendResult(False, error="WhatsApp credentials are not configured")
     channel = "simulator"
     if whatsapp.is_configured():
-        delivered = await whatsapp.send_text(patient[1], body)
-        if delivered:
+        delivery = await whatsapp.send_text_result(patient[1], body)
+        if delivery.delivered:
             channel = "whatsapp"
 
     now = datetime.now().isoformat()
     cursor = await db.execute(
-        "INSERT INTO messages (patient_id, direction, body, created_at, channel) VALUES (?,?,?,?,?)",
-        (patient_id, "outbound", body, now, channel),
+        """INSERT INTO messages
+           (patient_id, direction, body, created_at, channel, delivery_status,
+            delivery_error, external_message_id) VALUES (?,?,?,?,?,?,?,?)""",
+        (patient_id, "outbound", body, now, channel,
+         "accepted" if delivery.delivered else "failed",
+         delivery.error, delivery.message_id),
     )
     await db.commit()
     message = {
@@ -885,17 +967,20 @@ async def send_care_team_message(patient_id: int, body: str, db: Connection) -> 
         "tts_provider": None,
         "tts_voice": None,
         "tts_latency_ms": None,
+        "delivery_status": "accepted" if delivery.delivered else "failed",
+        "delivery_error": delivery.error or None,
+        "external_message_id": delivery.message_id or None,
     }
     event = {"type": "message", "message": message, "patient_id": patient_id}
     await manager.broadcast(patient_id, event)
     await manager.broadcast_all(event)
     return {
         "message": message,
-        "delivered": delivered,
+        "delivered": delivery.delivered,
         "channel": channel,
         "delivery_note": (
-            "Sent on WhatsApp" if delivered
-            else "Saved to the demo conversation; WhatsApp delivery is not configured"
+            "WhatsApp accepted the message; delivery status will update in the conversation"
+            if delivery.delivered else delivery.error
         ),
     }
 
@@ -1157,6 +1242,7 @@ async def health():
         "status": "degraded" if DB_ERROR else "ok",
         "service": "VeloxaCare API",
         "whatsapp_configured": whatsapp.is_configured(),
+        "whatsapp_welcome_template_configured": bool(os.getenv("META_WELCOME_TEMPLATE", "").strip()),
         "stt_providers": stt.configured_providers(),
         "webhook": "/webhook/whatsapp",
         # Which store is in use, and why it isn't working if it isn't. Without

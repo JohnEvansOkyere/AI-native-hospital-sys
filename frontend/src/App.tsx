@@ -221,6 +221,11 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
 
   useLiveSocket(`/ws/${patient.id}`, useCallback((data: any) => {
     if (data.type === 'message') addMessage(data.message)
+    if (data.type === 'message_delivery') {
+      setMessages(prev => prev.map(message => message.id === data.message_id
+        ? { ...message, delivery_status: data.delivery_status, delivery_error: data.delivery_error }
+        : message))
+    }
     if (data.type === 'patient_updated') onUpdate()
   }, [onUpdate, addMessage]))
 
@@ -497,6 +502,12 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
                   )}
                   <span className="absolute bottom-1 right-2 text-[10px] text-slate-400 flex items-center gap-0.5">
                     {formatTime(msg.created_at)}
+                    {isOut && msg.delivery_status === 'failed' && (
+                      <span className="text-red-500" title={msg.delivery_error || 'WhatsApp delivery failed'}> · not sent</span>
+                    )}
+                    {isOut && ['sent', 'delivered', 'read'].includes(msg.delivery_status || '') && (
+                      <span className="text-[#4FC3F7]">✓✓</span>
+                    )}
                     {!isOut && <span className="text-[#4FC3F7]">✓✓</span>}
                   </span>
                 </div>
@@ -745,6 +756,7 @@ function EnrollModal({ onClose, onEnrolled }: { onClose: () => void; onEnrolled:
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [enrolled, setEnrolled] = useState<Patient | null>(null)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -753,6 +765,7 @@ function EnrollModal({ onClose, onEnrolled }: { onClose: () => void; onEnrolled:
     try {
       const p = await api.enrollPatient({ ...form, age: form.age ? Number(form.age) : null })
       onEnrolled(p)
+      setEnrolled(p)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to enroll')
     } finally {
@@ -771,6 +784,40 @@ function EnrollModal({ onClose, onEnrolled }: { onClose: () => void; onEnrolled:
       drug_name: category === 'chronic' ? 'Amlodipine' : '',
       drug_dosage: category === 'chronic' ? '5mg once daily' : '',
     }))
+  }
+
+  if (enrolled) {
+    const delivery = enrolled.welcome_delivery
+    const sent = delivery?.delivered === true
+    return (
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="p-6 text-center">
+            <div className={`mx-auto w-12 h-12 rounded-full flex items-center justify-center ${
+              sent ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+            }`}>
+              {sent ? <CheckCircle size={24} /> : <AlertTriangle size={24} />}
+            </div>
+            <h2 className="mt-3 text-lg font-bold text-slate-800">Patient added</h2>
+            <p className="mt-1 text-sm text-slate-500">{enrolled.name} is now in the care dashboard.</p>
+            <div className={`mt-4 rounded-xl border p-3 text-left ${
+              sent ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'
+            }`}>
+              <p className={`text-sm font-semibold ${sent ? 'text-emerald-800' : 'text-amber-800'}`}>
+                {sent ? 'Welcome accepted by WhatsApp' : 'WhatsApp welcome not sent'}
+              </p>
+              <p className={`mt-1 text-xs leading-relaxed ${sent ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {delivery?.note || 'No WhatsApp delivery result was returned.'}
+              </p>
+            </div>
+            <button onClick={onClose}
+              className="mt-5 w-full rounded-xl bg-slate-900 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -979,6 +1026,9 @@ export default function App() {
     // A message landed on some channel — WhatsApp included. Nudge the open
     // timeline to refetch so the clinic view stays live.
     if (data.type === 'message') {
+      setRefreshKey(k => k + 1)
+    }
+    if (data.type === 'message_delivery') {
       setRefreshKey(k => k + 1)
     }
   }, []))
@@ -1203,7 +1253,6 @@ export default function App() {
             ? prev.map(existing => existing.id === p.id ? p : existing)
             : [...prev, p])
           setSelectedId(p.id)
-          setShowEnroll(false)
         }} />
       )}
       {showReport && <ReportModal onClose={() => setShowReport(false)} />}

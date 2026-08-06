@@ -114,10 +114,23 @@ whether the transcript merely contains the word “appointment.”
 ### Language support — this is the headline
 
 Confirmed in Intron's docs table: **`tw`** (Twi), **`ak`** (Akan), **`pcm`**
-(Pidgin) and **`gaa`** (Ga) are all supported input languages. The table lists
-single languages only — no explicit `xx-en` pair codes — so a code-switched
-utterance goes under its non-English code and Sahara's code-switching handling
-does the rest.
+(Pidgin) and **`gaa`** (Ga) are all listed as supported input languages. The
+table lists single languages only — no explicit `xx-en` pair codes.
+
+**But documented ≠ shipped, and this is the sharper finding.** Intron confirmed
+directly that the **Akan–English code-switch pair had not yet been added** at
+time of testing (rolling out the week of 10 Aug 2026). Measured alongside it: the
+monolingual `tw` model returns an *empty* transcript on Twi–English code-switched
+speech — it does not emit the English half, which is where the numerals and drug
+names live — while the same audio under the `en` hint yields usable text and
+correct BP extraction. That is why `SaharaEnglishSTT` exists as a separate
+benchmark row.
+
+State this plainly in the report rather than implying full coverage. It is a
+*stronger* result: even the African-built model does not yet have the
+code-switch pair Ghanaian patients actually speak, and the gap is closing while
+we watch. Do not write it as a criticism of Intron — they are the only one of
+the four building it at all.
 
 Whisper's ~99 languages contain **none** of those four, and Cartesia's
 `ink-whisper` inherits that gap. So:

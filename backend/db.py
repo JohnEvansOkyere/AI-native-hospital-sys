@@ -230,7 +230,12 @@ CREATE TABLE IF NOT EXISTS messages (
     stt_latency_ms INTEGER DEFAULT 0,
     tts_provider TEXT DEFAULT '',
     tts_voice TEXT DEFAULT '',
-    tts_latency_ms INTEGER DEFAULT 0
+    tts_latency_ms INTEGER DEFAULT 0,
+    -- Outbound WhatsApp audit. 'accepted' means Meta accepted the API call;
+    -- sent/delivered/read/failed arrive later through webhook status events.
+    delivery_status TEXT DEFAULT '',
+    delivery_error TEXT DEFAULT '',
+    external_message_id TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS adherence_logs (
@@ -558,6 +563,9 @@ async def init_db():
             "tts_provider": "TEXT DEFAULT ''",
             "tts_voice": "TEXT DEFAULT ''",
             "tts_latency_ms": "INTEGER DEFAULT 0",
+            "delivery_status": "TEXT DEFAULT ''",
+            "delivery_error": "TEXT DEFAULT ''",
+            "external_message_id": "TEXT DEFAULT ''",
         }
         for column, definition in new_message_columns.items():
             if column not in existing_message_columns:
