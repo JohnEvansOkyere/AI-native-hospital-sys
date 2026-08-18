@@ -542,11 +542,15 @@ onto an existing HMS. It also collapsed the cost: classifying why one patient
 slipped now costs a fraction of a pesewa, which is what makes per-patient pricing
 work at Ghanaian prices.
 
-**Speech models can finally hear Ghanaians.** African-built speech APIs now
-accept Twi, Akan, Pidgin and Ga. I measured this rather than assumed it — and
-measured that a major commercial API rejects all four outright while accepting
-Swahili. A system that requires a 55-year-old in Kumasi to type formal English is
-a different, worse system.
+**Speech models are only now learning to hear Ghanaians — and I can date it.**
+The African-built provider documents Twi, Akan, Pidgin and Ga; the major
+commercial one rejects all four outright with explicit errors while accepting
+Swahili. I measured that rather than assuming it. And the specific capability
+our patients need — Akan–English *code-switching*, not either language alone —
+was still being rolled out while we were testing. We are building at the exact
+moment the infrastructure arrives; a year ago this product could not have
+understood its own users, and a system that requires a 55-year-old in Kumasi to
+type formal English is a different, worse system.
 
 **Ghana is digitising, and the coordination layer is the gap.** LHIMS, DHIMS2 and
 NHIS CLAIM-it are live, so facilities now expect to run on software — but those
@@ -1132,6 +1136,423 @@ the honest next one — onboarding a clinic currently depends on you personally.
 **Yes** — Accra, so you qualify for the hybrid track: in-person workshops,
 networking, and Demo Day. Say so if there is anywhere to say it; it signals you
 will actually be in the room.
+
+---
+
+## Q54–Q58 — not yet drafted
+
+The form jumps from the commitment questions to the business-plan upload. If
+Q54–Q58 ask anything substantive, draft them before submitting — the evidence
+bank below covers most of what they are likely to want.
+
+---
+
+## Q58 — Upload Business Plan (optional)
+
+**Upload it.** See [VELOXACARE-BUSINESS-PLAN.md](VELOXACARE-BUSINESS-PLAN.md) —
+export to PDF and attach.
+
+Two reasons to bother with an optional field. Most of the cohort will skip it,
+so it is cheap differentiation. And this committee said it is "less interested
+in polished pitch decks" — a plain plan with its assumptions visible and its
+gaps named is exactly the opposite of a deck, and reads as the thing they said
+they wanted.
+
+Fill the placeholders (demo URL, Asamoah's surname, compensation lines) before
+exporting. Leave the assumptions register in. Nothing in the plan makes a claim
+the rest of this form does not.
+
+---
+
+## Q59 — Tell us about the hardest thing you have ever built or accomplished.
+
+> Answered from **Pharma-POS-AI**, the pharmacy point-of-sale system — not from
+> VeloxaCare. It is the harder build, and it is the only evidence on this form
+> that you have taken software all the way to the standard a real business
+> depends on. It also frees the benchmark story for Q63.
+
+### Submission answer (~250 words)
+
+Pharma-POS-AI — a pharmacy point-of-sale system for Ghanaian pharmacies. I built
+it alone over eight months, and it is the hardest thing I have done because of
+what happens when it is wrong.
+
+A bug in most software is an annoyance. A bug here dispenses an expired drug,
+lets a cashier void a sale to cover a theft, or loses a day's takings when the
+internet drops in a pharmacy that never had reliable internet to begin with. So
+stock is dispensed first-expiry-first-out with row locking, because two tills can
+otherwise allocate the same batch. Every stock change is append-only. Every audit
+entry hashes the one before it, so no record can be silently edited. Every sale
+is written to a local outbox before anything else, so nothing is lost when the
+connection is.
+
+None of that was the hard part. The hard part was the eleven audits I ran against
+my own work, and what they returned: revenue that counted voided sales,
+discounts that could drive a total negative, deleting a user that cascaded away
+their sales *and their audit trail*. All my code. All of it looking finished.
+
+And the hardest single decision: I had built full per-client infrastructure
+isolation — separate database, separate secrets, encrypted off-platform backups
+per pharmacy — and got it passing 280 tests across two deployment profiles. Then
+I deleted it, because onboarding a shop should not require standing up a server.
+Eight months to build it. One decision to admit I had built the wrong thing well.
+
+### Short fallback (299 characters)
+
+A pharmacy POS for Ghanaian pharmacies, built alone over eight months, where a
+bug dispenses an expired drug. FEFO with row locking, hash-chained audit,
+offline outbox. Then I ran eleven audits against my own code and deleted an
+isolated-per-client architecture that already passed 280 tests.
+
+### If a mentor asks what actually made it hard
+
+Three things, in order:
+
+1. **Correctness under offline conditions.** Local-first PostgreSQL, an outbox
+   with monotonic sequence numbers and payload hashes, idempotent sync
+   ingestion. Everything must survive the power and the internet going out
+   mid-sale, on a low-spec pharmacy machine.
+2. **Auditing my own work honestly.** Eleven audits between April 2026 and July
+   2026, each producing a defect table with severity, file, and status. Most
+   critical findings were mine.
+3. **Reversing an architecture I was proud of.** Per-tenant isolation was the
+   correct instinct and the wrong product decision. Pooled SaaS with enforced
+   tenant scope replaced it.
+
+---
+
+## Q60 — What is one belief you have about your industry that most people disagree with?
+
+### Submission answer (~215 words)
+
+That medication adherence is an economics problem, and almost the entire industry
+treats it as a psychology problem.
+
+Nearly every adherence product ever built is a reminder — a push notification, a
+pillbox, an SMS nudge — because the design assumption is that patients forget.
+That assumption is correct in the health systems where the software was
+designed, where medicine is covered. In Ghana it is wrong. In one study of
+non-compliant patients, 96% named cost. A reminder tells a person who cannot
+afford their medicine to take their medicine. It is not merely useless; it is
+slightly insulting.
+
+People disagree partly because forgetting is genuinely the failure mode
+elsewhere, and partly because a reminder is far easier to build than a workflow
+that identifies a cheaper NHIS-covered alternative and gets a prescriber to sign
+off on it. The easy thing became the category.
+
+The corollary gets more disagreement still: the valuable use of AI in African
+healthcare is administrative, not clinical. Everyone wants to build the
+diagnosing AI. But very few Ghanaian patients are harmed because a doctor could
+not name their condition — they are lost *between* the visits, in the
+coordination. So we keep the model out of diagnosis entirely, deliberately, and
+put it on the work that is actually failing.
+
+### Short fallback (297 characters)
+
+Adherence is an economics problem the industry treats as psychology. Every
+product is a reminder, because the assumption is patients forget. Here 96% of
+non-compliant patients said cost. A reminder tells someone who can't afford
+medicine to take it. The hard workflow is finding the cheaper drug.
+
+---
+
+## Q61 — What would you build if funding did not matter?
+
+> This is the one question on the form where naming the whole operating system
+> is not overreach — they asked. Keep the proof sentence at the end anyway.
+
+### Submission answer (~255 words)
+
+The whole operating system at once, instead of one agent at a time.
+
+VeloxaCare is meant to be an AI-native operating system for African clinics: a
+shared, permissioned health-and-operations graph, worked by a workforce of
+specialised agents, with licensed humans holding every clinical decision. Patient
+access. Clinical documentation, turning a clinician's speech into a structured
+note. Triage and routing. Care coordination. Pharmacy and supply, predicting a
+stockout before it happens. Claims and finance. And a facility manager agent that
+answers "which patients need attention today?" in plain language.
+
+Every event runs the same loop — understand it, decide the next step, let policy
+decide whether AI acts or a human approves, execute, track the outcome, learn
+from it. That loop is the system. No single agent is.
+
+Funding is what forces me to build it in revenue order rather than dependency
+order, and those are not the same order. A documentation agent alone is dictation
+software. A claims agent alone is a form-filler. The compounding only starts when
+one patient's event moves through all of them on one graph — which is exactly the
+part no individual clinic will fund, because each of them pays for a piece and
+the value shows up in the whole.
+
+With money out of the question I would also build the two things nobody owns: the
+patient continuity record that follows a Ghanaian from CHPS compound to clinic to
+pharmacy, and the outcome evidence on what actually keeps an African patient on
+treatment. I would publish the second one.
+
+But this is a sequence I have started, not a wish. The first agent is live.
+
+### Short fallback (299 characters)
+
+The whole operating system at once instead of one agent at a time —
+documentation, triage, pharmacy, claims, facility manager, all on one graph.
+Funding forces revenue order, not dependency order; the compounding only starts
+when a patient event runs through all of them. The first agent is live.
+
+### If asked what specifically the money buys
+
+Do not answer this one with "more engineers." Answer with the dependency:
+
+> The agents that pay for themselves fastest are not the agents that unlock the
+> others. Documentation and claims sell easily and sit at the edge of the graph.
+> Identity, consent, the care-episode model and the task-and-audit spine sell to
+> nobody and everything else depends on them. Funding buys the spine before the
+> revenue, which is the correct build order and the one I cannot currently
+> afford.
+
+---
+
+## Q62 — If we reject your application, what will you do next?
+
+### Submission answer (~200 words)
+
+Keep going, on a slower and more expensive path.
+
+The pilots do not depend on you. Impact Medical and Rivia asked for proposals
+before I applied here, and the plan is real patients on the system in Q4 either
+way. What I lose without the Sprint is the part I cannot generate alone: I would
+be pricing by guesswork, closing by instinct, and looking for a clinician advisor
+through cold outreach rather than through a room that already contains one. That
+costs months, and months are patients.
+
+So, concretely, on a rejection: run the two pilots anyway with baselines agreed
+up front; take the first paying customer at whatever price I can defend; and
+apply to the next programme carrying 60 days of real retention data instead of a
+prototype — which will be a stronger application than this one.
+
+I would also ask you what was missing. A specific reason from a committee that
+read thirty of these is worth a great deal to me, and I will take it in one line
+if that is all there is time for.
+
+None of this is contingent on a yes. The company was moving before the
+application and will be moving after it.
+
+### Short fallback (295 characters)
+
+Keep going, slower. The pilots pre-date this application — real patients in Q4
+either way. Without the Sprint I price by guesswork and close by instinct, which
+costs months. I would run the pilots, take a first paying customer, ask you what
+was missing, and reapply with real retention data.
+
+---
+
+## Q63 — Describe a time you failed and what you learned from it.
+
+> **Check the bracketed line against what actually happened with VeloxaRecruit
+> before submitting.** The shape of the answer is right; only you know the exact
+> outcome. If the facts do not fit, use the alternative below.
+
+### Submission answer (~215 words)
+
+I built a company before I ever asked anyone to pay for one.
+
+VeloxaRecruit — AI video interviewing — was Deborah's and my first product. We
+shipped it. It worked. it never converted
+into paying customers / it stalled at 0 users now. The failure was not technical, which
+is exactly what made it instructive. We built for months against our own idea of
+what recruiters wanted, and did the selling last, by which point the product was
+already shaped.
+
+What I learned is that order matters more than effort. Nothing about that
+product would have been harder to build if we had spoken to twenty recruiters
+first — it would simply have been a different product, and possibly a live one.
+
+You can see the correction in how VeloxaCare has been run. Five providers
+contacted while the product was still rough. A discovery script whose first
+question is the clinic's own drop-off number, asked before any demo. Three
+proposals in flight before a single pilot patient exists. And when three of those
+providers turned out to want something adjacent — dental recall, cross-department
+referral — I did not chase it, because the second lesson from VeloxaRecruit is
+that interest is not demand.
+
+I am still not good at closing. That is a large part of what I am applying for.
+
+### Short fallback (294 characters)
+
+We built and shipped VeloxaRecruit before ever asking anyone to pay. The failure
+wasn't technical — we sold last, when the product was already shaped. Order
+matters more than effort. With VeloxaCare I contacted five providers while the
+product was still rough. Still not good at closing.
+
+### Alternative, if the VeloxaRecruit facts do not fit (~150 words)
+
+Now clear to use — Q59 above answers from Pharma-POS-AI, so the benchmark story
+is not spoken for anywhere else on the form.
+
+> I nearly published a false research finding because I liked the result.
+>
+> Our benchmark ranked the African-built speech model last on word error rate.
+> That matched what the whole industry assumes, so I almost shipped it. One
+> transcript did not look like a failure: the model had heard "one forty-two
+> over ninety-five" and written 142/95 — it understood the number was a blood
+> pressure — while the models beating it wrote the words out. My scorer counted
+> understanding as three errors.
+>
+> The failure was not the bug. It was that a result confirming my assumptions
+> got less scrutiny than one contradicting them would have. I now score
+> downstream task success first, and I do not trust a metric I have not tried to
+> break.
+
+---
+
+## Q64 — What evidence do you have that customers truly need this solution?
+
+### Submission answer (~235 words)
+
+Three tiers, and I will be straight about where the strongest one is still
+missing.
+
+**Population evidence.** 55% of Ghanaian chronic patients do not take medication
+as prescribed. In one Ghanaian study, 96% of non-compliant patients named cost,
+not forgetting. That establishes the problem at scale. It does not prove anyone
+will buy a solution to it.
+
+**Provider evidence — the real signal.** Five providers approached, three moved
+forward: Impact Medical & Diagnostic Centre requested a proposal after an
+in-person visit, Rivia Clinics requested a proposal, Sonrisa Dental asked for a
+meeting. What convinced me was not the hit rate. It was that each one restated
+the problem in their own words, unprompted, before we had described it that way.
+The dental clinic's version is the six-month recall that never happens. The
+diagnostics centre's is a patient who uses one of sixteen services and never
+learns about the other fifteen. The employee-health company's is members who
+never use care their employer already paid for. Nobody had to be sold the
+problem. That is the difference between a real need and a pitch landing well.
+
+**The evidence I do not have: nobody has paid, and no pilot has run.** Interest
+is not demand, and I would rather say that in an application than dress three
+proposals up as traction. Turning that sentence into a signed contract is
+precisely what I am applying for.
+
+### Short fallback (299 characters)
+
+55% of Ghanaian chronic patients are non-adherent; 96% of those in one study
+said cost. Five providers approached, three moved to proposal — and each
+restated the problem unprompted in their own words. What I don't have: nobody
+has paid and no pilot has run. Interest is not demand.
+
+---
+
+## Q65 — What assumptions about your business are you most uncertain about today?
+
+### Submission answer (~230 words)
+
+In order of how much damage being wrong would do.
+
+**1. Who pays, and how much.** The entire market model runs on US$1.50 per active
+patient per month. That is a modelling assumption, not a tested price — nobody
+has ever been quoted it. I also do not know yet whether the buyer is the clinic,
+the attached pharmacy, an insurer or an employer plan. Payer and price are one
+uncertainty, and it is the biggest thing standing between this working and this
+being a company.
+
+**2. That patients keep replying.** Week-one engagement is easy. I have not
+measured week six. If reply rates decay the way they do in most messaging health
+programmes, the honest answer is fewer and better-timed messages, not more — but
+right now that is a belief, not a finding.
+
+**3. That the cost workflow actually resolves.** We detect a cost barrier
+reliably. Whether the NHIS-covered alternative reaches the patient depends on a
+prescriber signing off and a pharmacy holding stock — two things outside our
+software. If that chain breaks in practice, we are an excellent detector of a
+problem we cannot fix.
+
+**4. Facility size.** The model assumes 400 chronic patients per clinic. It is a
+guess, and it is question one on our discovery sheet.
+
+A 60-day pilot resolves 2 and 3. Five real priced offers resolve 1 and 4. Both
+happen inside the twelve weeks.
+
+### Short fallback (298 characters)
+
+Biggest: who pays and how much — $1.50/patient/month is modelled, never quoted,
+and the buyer may be the pharmacy not the clinic. Then: whether patients still
+reply in week six. Then: whether a detected cost barrier actually resolves, since
+that depends on a prescriber and pharmacy stock.
+
+---
+
+## Q66 — Why are you the right person (not just a good person) to solve this problem?
+
+### Submission answer (~240 words)
+
+A good person would have built the reminder app.
+
+That is the honest distinction. The reason I did not is that I watched this fail
+from close up — my mother nearly died after missing her diabetes medicine, and
+the problem was never that she forgot. So when I sat down to build, I already
+knew the obvious product was the wrong one, and I went looking for the real
+failure mode before writing a line of code. That is lived experience doing work,
+not lived experience as a credential.
+
+Then three things that are not about caring.
+
+**I can build the whole thing, and did.** The WhatsApp integration, the clinician
+dashboard, the deterministic escalation engine, and a four-provider speech stack
+that keeps working offline when a clinic's internet does not.
+
+**I measure instead of assuming.** Everyone building voice for Africa assumes the
+major commercial APIs handle it. I ran the benchmark: one rejects Twi, Akan,
+Pidgin and Ga outright while accepting Swahili, and it heard a blood pressure of
+116 as 160 — the difference between a stable patient and an emergency. That is
+not an opinion I hold. It is a result I have.
+
+**I hold the line under commercial pressure.** Three providers wanted an adjacent
+product that would have been easier to sell. I stayed on chronic care, because a
+recall reminder is the one part of this anyone can copy and the cost workflow is
+not.
+
+### Short fallback (299 characters)
+
+A good person builds the reminder app. I knew that was the wrong product because
+I watched it fail in my own family. Then: I built the whole system alone, I
+benchmarked the speech models instead of assuming, and I turned down three
+easier adjacent customers to stay on the problem that matters.
+
+---
+
+## Q67 — How did you hear about Axis Sprint?
+
+_Your answer._ Tick the one that is true — LinkedIn / X / Friend / University /
+Partner / Event / Newsletter. Nothing rides on it; do not overthink it.
+
+---
+
+## Q68 — Is there anything else you would like us to know?
+
+### Submission answer (~150 words)
+
+Two things.
+
+First, the fastest way to evaluate this application is not to read it. The
+product is live. Open the demo, send a voice note in Twi-English, and watch a
+patient escalate on the clinician dashboard in real time. It takes ninety seconds
+and it will tell you more than anything above.
+
+Second, what I am *not* claiming. No pilot has run. Nobody has paid. I have three
+proposals out and a price I have never quoted to anyone. Everything on this form
+described as built is built, and everything described as measured is measured — I
+have tried hard not to let those two blur into each other, because that blur is
+how most of these forms get written.
+
+The distance between a system that works and a company that sells is roughly
+twelve weeks of exactly what you teach. That is why I am here.
+
+### Short fallback (290 characters)
+
+Fastest way to evaluate this is not to read it — open the demo, send a Twi-
+English voice note, watch a patient escalate live. And what I'm not claiming: no
+pilot has run, nobody has paid, my price has never been quoted. Everything I
+called built is built; everything measured is measured.
 
 ---
 

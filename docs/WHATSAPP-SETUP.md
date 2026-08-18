@@ -83,6 +83,46 @@ enrolling someone is a consented clinical act, not a side effect of texting.
 Store numbers in E.164 (`+233241000001`). Meta sends them without the `+`; the
 adapter compares digits only, so both forms work.
 
+### Make the first welcome deliver
+
+Enrollment is clinic-initiated, so a new patient normally has no open 24-hour
+customer-service window. Create and approve a WhatsApp template named
+`veloxacare_welcome` with one body variable and this exact body:
+
+```text
+Welcome to VeloxaCare, {{1}}! 👋 I’ll help you stay on track with your care and follow-up. Reply START to begin.
+```
+
+Then set these in the deployed environment:
+
+```bash
+META_WELCOME_TEMPLATE=veloxacare_welcome
+META_WELCOME_TEMPLATE_LANGUAGE=en_US
+```
+
+### Create the medication reminder template
+
+Create and approve a **Utility → Default** template named
+`veloxacare_medication_reminder` with three body variables and this body:
+
+```text
+Hello {{1}}! 💊 It is time to take your {{2}} ({{3}}). Reply YES when done, or NO if you missed it.
+```
+
+Use realistic review samples in this order: patient first name (`Ama`), medicine
+(`Amlodipine`), and dosage (`5mg once daily`). After Meta approves the template,
+set:
+
+```bash
+META_MEDICATION_REMINDER_TEMPLATE=veloxacare_medication_reminder
+META_MEDICATION_REMINDER_TEMPLATE_LANGUAGE=en_US
+```
+
+The Add Patient result now reports the real outcome. “Meta accepted” means the
+API call succeeded; the conversation changes to `sent`, `delivered`, `read` or
+`failed` when Meta posts its status receipt. A welcome shown as **Not sent** was
+saved to the clinical record but did not reach the patient's phone.
+
 ## What the webhook does
 
 ```
@@ -90,7 +130,8 @@ GET  /webhook/whatsapp    Meta's verification handshake
 POST /webhook/whatsapp    inbound message
 ```
 
-On POST it verifies the `X-Hub-Signature-256` HMAC, drops duplicate deliveries by
+On POST it verifies the `X-Hub-Signature-256` HMAC, records outbound delivery
+receipts, drops duplicate inbound deliveries by
 message ID (Meta retries aggressively — without this a patient gets two replies),
 resolves the sender to a patient, and then:
 
@@ -191,4 +232,4 @@ real message and may trigger a real escalation, so use a test patient.
 | Verified but silent | `messages` field not subscribed |
 | 403 in your logs | `META_APP_SECRET` mismatch — signature check rejecting |
 | Reply never sends | Token expired, or recipient not on a test number's allow-list |
-| Works, then forgets everything | `TURSO_DATABASE_URL` unset — see [DEPLOY.md](DEPLOY.md) |
+| Works, then forgets everything | `DATABASE_URL` unset — see [DEPLOY.md](DEPLOY.md) |

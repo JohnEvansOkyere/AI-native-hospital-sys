@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 from db import Connection
 from services.appointments import handle_appointment_turn
@@ -42,8 +42,8 @@ async def _build_context(patient_id: int, db: Connection,
     in context (their meds, adherence, last reading, conversation so far)."""
     # Adherence over last 14 days
     cursor = await db.execute(
-        "SELECT response FROM adherence_logs WHERE patient_id=? AND log_date > date('now','-14 days')",
-        (patient_id,)
+        "SELECT response FROM adherence_logs WHERE patient_id=? AND log_date>?",
+        (patient_id, (date.today() - timedelta(days=14)).isoformat())
     )
     rows = await cursor.fetchall()
     adherence_pct = round(sum(1 for r in rows if r[0] == "yes") / len(rows) * 100) if rows else 0
@@ -74,8 +74,9 @@ async def _build_context(patient_id: int, db: Connection,
 
 
 # Reasons that represent a barrier to treatment and must be escalated to the care team.
-# cost / ran_out escalate on the 2nd occurrence in 14 days; side_effect escalates immediately.
-ESCALATE_AT = {"cost": 2, "ran_out": 2, "side_effect": 1}
+# Repeated treatment barriers escalate on the 2nd occurrence in 14 days. Acute
+# emergency symptoms still bypass this counter and create an immediate red case.
+ESCALATE_AT = {"cost": 2, "ran_out": 2, "side_effect": 2}
 
 ESC_REASON_TEXT = {
     "cost": "Cost barrier — patient unable to afford medication ({count}x in 14 days)",
@@ -102,8 +103,8 @@ async def _handle_missed_dose(patient_id: int, name: str, message: str,
     escalation_created = False
     if reason in ESCALATE_AT:
         cursor = await db.execute(
-            "SELECT COUNT(*) FROM adherence_logs WHERE patient_id=? AND response=? AND log_date > date('now','-14 days')",
-            (patient_id, reason)
+            "SELECT COUNT(*) FROM adherence_logs WHERE patient_id=? AND response=? AND log_date>?",
+            (patient_id, reason, (date.today() - timedelta(days=14)).isoformat())
         )
         count = (await cursor.fetchone())[0]
         if count >= ESCALATE_AT[reason]:
@@ -241,7 +242,8 @@ async def _process_dental_message(
         )
 
     await db.execute(
-        "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+        """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+           ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
         (patient_id, new_flow, "{}"),
     )
     await db.commit()
@@ -305,7 +307,8 @@ async def _process_eye_message(
         bot_reply = f"Thanks for your message, {first}. I can help with your eye-care follow-up, aftercare questions, and booking a return visit."
 
     await db.execute(
-        "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+        """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+           ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
         (patient_id, new_flow, "{}"),
     )
     await db.commit()
@@ -349,7 +352,8 @@ async def _process_general_message(
         bot_reply = f"Thanks for your message, {first}. I can help with your clinic follow-up, care instructions, and booking a return visit."
 
     await db.execute(
-        "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+        """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+           ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
         (patient_id, new_flow, "{}"),
     )
     await db.commit()
@@ -410,7 +414,7 @@ async def process_message(patient_id: int, message: str, db: Connection):
         bot_reply = (
             f"⚠️ {first}, these symptoms can be serious. Please go to the nearest clinic or "
             f"hospital right away, or ask someone to help you get there now. "
-            f"I've alerted your care team immediately. 🏥"
+            f"I've marked this urgent for your care team. Please keep your phone close. 🏥"
         )
         reason = None
         if category == "dental":
@@ -426,7 +430,7 @@ async def process_message(patient_id: int, message: str, db: Connection):
         details = json.dumps({
             "category": category,
             "symptoms_reported": message,
-            "action": "Patient advised to seek emergency care; care team alerted.",
+            "action": "Patient advised to seek emergency care; urgent care-team case created.",
         })
         emergency_reason = (
             f"{category.title()} recovery concern reported: {message}"
@@ -443,7 +447,8 @@ async def process_message(patient_id: int, message: str, db: Connection):
                 (patient_id, today, f"{category}_care", "concern", message, now),
             )
         await db.execute(
-            "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+            """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+               ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
             (patient_id, "idle", "{}")
         )
         await db.commit()
@@ -465,7 +470,8 @@ async def process_message(patient_id: int, message: str, db: Connection):
     if appointment_turn:
         bot_reply, new_flow, new_context = appointment_turn
         await db.execute(
-            "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+            """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+               ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
             (patient_id, new_flow, json.dumps(new_context)),
         )
         await db.commit()
@@ -503,7 +509,7 @@ async def process_message(patient_id: int, message: str, db: Connection):
         if is_yes(message):
             # Log adherence as yes
             await db.execute(
-                "INSERT OR REPLACE INTO adherence_logs (patient_id, log_date, response, created_at) VALUES (?,?,?,?)",
+                "INSERT INTO adherence_logs (patient_id, log_date, response, created_at) VALUES (?,?,?,?)",
                 (patient_id, today, "yes", now)
             )
             streak += 1
@@ -526,7 +532,8 @@ async def process_message(patient_id: int, message: str, db: Connection):
                 bot_reply = await generate_assistant_reply(facts, history, message)
                 # keep the reminder pending — they still haven't answered
                 await db.execute(
-                    "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+                    """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+                       ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
                     (patient_id, "awaiting_medication_ack", "{}")
                 )
                 await db.commit()
@@ -597,7 +604,7 @@ async def process_message(patient_id: int, message: str, db: Connection):
         elif is_yes(message):
             # Treat as medication ack even from idle
             await db.execute(
-                "INSERT OR REPLACE INTO adherence_logs (patient_id, log_date, response, created_at) VALUES (?,?,?,?)",
+                "INSERT INTO adherence_logs (patient_id, log_date, response, created_at) VALUES (?,?,?,?)",
                 (patient_id, today, "yes", now)
             )
             bot_reply = await generate_bot_reply(name, "awaiting_medication_ack", message, streak=streak + 1)
@@ -625,7 +632,8 @@ async def process_message(patient_id: int, message: str, db: Connection):
 
     # Update conversation state
     await db.execute(
-        "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+        """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+           ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
         (patient_id, new_flow, json.dumps(new_context))
     )
     await db.commit()
@@ -647,7 +655,8 @@ async def trigger_care_reminder(patient_id: int, db: Connection) -> str:
 
     if category in ("dental", "eye", "general"):
         await db.execute(
-            "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+            """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+               ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
             (patient_id, f"awaiting_{category}_aftercare", "{}"),
         )
         await db.commit()
@@ -662,12 +671,13 @@ async def trigger_care_reminder(patient_id: int, db: Connection) -> str:
         return f"Hi {first}! 🦷 How is your {service_type or 'dental treatment'} recovery today? Please confirm when you’ve followed this advice: {instruction}"
 
     await db.execute(
-        "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+        """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+           ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
         (patient_id, "awaiting_medication_ack", "{}")
     )
     await db.commit()
 
-    return f"Good morning {first}! ☀️ Time for your {drug} ({dosage}). Reply YES when done, NO if you missed it."
+    return f"Hello {first}! 💊 It is time to take your {drug} ({dosage}). Reply YES when done, or NO if you missed it."
 
 
 async def trigger_medication_reminder(patient_id: int, db: Connection) -> str:
@@ -687,7 +697,8 @@ async def trigger_checkin(patient_id: int, db: Connection) -> str:
 
     if category in ("dental", "eye", "general"):
         await db.execute(
-            "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+            """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+               ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
             (patient_id, f"awaiting_{category}_checkin", "{}"),
         )
         await db.commit()
@@ -703,7 +714,8 @@ async def trigger_checkin(patient_id: int, db: Connection) -> str:
         return f"Hi {first}! 🦷 How is your recovery after your {service_type or 'dental treatment'}? Reply DONE if you’re well, or tell us about any pain, swelling, bleeding, or other concern."
 
     await db.execute(
-        "INSERT OR REPLACE INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+        """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+           ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
         (patient_id, "awaiting_bp", "{}")
     )
     await db.commit()

@@ -31,5 +31,11 @@
       "source": "/(.*)",
       "destination": { "type": "service", "service": "frontend" }
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/hourly",
+      "schedule": "0 * * * *"
+    }
   ]
 }

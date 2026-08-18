@@ -1,4 +1,48 @@
 const BASE = '/api'
+let csrfToken = ''
+
+export class AuthenticationRequired extends Error {}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase()
+  const headers = new Headers(init.headers)
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
+    headers.set('X-CSRF-Token', csrfToken)
+  }
+  const response = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' })
+  if (response.status === 401) throw new AuthenticationRequired('Please sign in again')
+  if (response.status === 204) return undefined as T
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload.detail || 'Request failed')
+  return payload as T
+}
+
+export interface StaffUser {
+  id: number
+  email: string
+  name: string
+  role: 'admin' | 'care_team'
+}
+
+export interface AuthSession {
+  user: StaffUser
+  csrf_token: string
+  expires_at: string
+  demo_enabled: boolean
+}
+
+export interface StaffRecord extends StaffUser {
+  active: boolean
+  last_login_at?: string | null
+  created_at: string
+}
+
+export interface ClinicSettings {
+  clinic_name: string
+  timezone: string
+  escalation_phone: string
+  updated_at?: string
+}
 
 export interface Patient {
   id: number
@@ -17,6 +61,14 @@ export interface Patient {
   doctor_name: string
   status: string
   risk_level: 'green' | 'amber' | 'red'
+  preferred_language: LanguagePair
+  reminder_time: string
+  consent_status: 'pending' | 'granted' | 'withdrawn'
+  consent_recorded_at?: string | null
+  consent_recorded_by?: string
+  communication_opt_in: number | boolean
+  paused: number | boolean
+  consent_history: Array<{ status: string; method: string; recorded_by: string; note: string; created_at: string }>
   adherence_pct: number
   care_completion_pct: number
   adherence_logs: { date: string; response: string }[]
@@ -26,6 +78,14 @@ export interface Patient {
   escalations: Escalation[]
   recent_resolutions: Escalation[]
   current_flow: string
+  /** Present only on the enrollment response; reports the real Meta send attempt. */
+  welcome_delivery?: {
+    delivered: boolean
+    channel: string
+    mode: 'template' | 'free_text' | 'consent_pending'
+    message_id: string
+    note: string
+  }
 }
 
 export interface Message {
@@ -46,11 +106,17 @@ export interface Message {
   tts_provider?: string | null
   tts_voice?: string | null
   tts_latency_ms?: number | null
+  /** When the spoken reply was translated (e.g. into Twi), the exact words the voice said. */
+  spoken_body?: string | null
+  /** Meta lifecycle for outbound WhatsApp: accepted → sent → delivered/read, or failed. */
+  delivery_status?: 'accepted' | 'sent' | 'delivered' | 'read' | 'failed' | null
+  delivery_error?: string | null
+  external_message_id?: string | null
 }
 
 /** Benchmark language_pair codes — a hint to the model, not a constraint on
  *  the patient. The transcript is whatever was actually said, code-switch included. */
-export type LanguagePair = 'en' | 'tw-en' | 'pcm-en'
+export type LanguagePair = 'en' | 'tw-en' | 'pcm-en' | 'gaa-en' | 'ewe-en'
 
 export interface SttStatus {
   configured: string[]
@@ -98,6 +164,11 @@ export interface Escalation {
   resolution_note?: string
   resolved_by?: string
   resolved_at?: string | null
+  assigned_to?: number | null
+  assigned_to_name?: string | null
+  acknowledged_at?: string | null
+  due_at?: string | null
+  notification_status?: string
 }
 
 export type ResolutionCode =
@@ -128,15 +199,74 @@ export interface Appointment {
   updated_at: string
 }
 
+export interface TodayWorklist {
+  date: string
+  alerts: Array<Escalation & { overdue: boolean }>
+  appointments: Array<Pick<Appointment, 'id' | 'patient_id' | 'patient_name' | 'appointment_time' | 'clinician_name' | 'visit_type' | 'status'>>
+  failed_deliveries: Array<{ id: number; patient_id: number; patient_name: string; body: string; delivery_error: string; created_at: string }>
+  reminders_due: Array<{ patient_id: number; patient_name: string; reminder_time: string }>
+  counts: { open_alerts: number; unacknowledged: number; appointments: number; failed_deliveries: number; reminders_due: number }
+}
+
 export const api = {
+  async login(email: string, password: string): Promise<AuthSession> {
+    const session = await request<AuthSession>('/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+    csrfToken = session.csrf_token
+    return session
+  },
+
+  async me(): Promise<AuthSession> {
+    const session = await request<AuthSession>('/auth/me')
+    csrfToken = session.csrf_token
+    return session
+  },
+
+  async logout(): Promise<void> {
+    await request<void>('/auth/logout', { method: 'POST' })
+    csrfToken = ''
+  },
+
+  async getStaff(): Promise<StaffRecord[]> {
+    return request('/staff')
+  },
+
+  async createStaff(data: { email: string; name: string; role: StaffUser['role']; password: string }): Promise<StaffRecord> {
+    return request('/staff', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
+  },
+
+  async setStaffActive(id: number, active: boolean): Promise<{ id: number; active: boolean }> {
+    return request(`/staff/${id}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }),
+    })
+  },
+
+  async resetStaffPassword(id: number, password: string): Promise<void> {
+    return request(`/staff/${id}/password`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+    })
+  },
+
+  async getClinicSettings(): Promise<ClinicSettings> {
+    return request('/settings/clinic')
+  },
+
+  async updateClinicSettings(data: ClinicSettings): Promise<ClinicSettings> {
+    return request('/settings/clinic', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
+  },
+
   async getPatients(): Promise<Patient[]> {
-    const r = await fetch(`${BASE}/patients`)
-    return r.json()
+    return request('/patients')
   },
 
   async getPatient(id: number): Promise<Patient> {
-    const r = await fetch(`${BASE}/patients/${id}`)
-    return r.json()
+    return request(`/patients/${id}`)
   },
 
   async enrollPatient(data: {
@@ -144,32 +274,36 @@ export const api = {
     category: 'dental' | 'eye' | 'chronic' | 'general'; condition: string;
     drug_name: string; drug_dosage: string; service_type: string;
     care_instructions: string; next_follow_up: string; recall_date: string;
-    doctor_name: string
+    doctor_name: string; preferred_language: LanguagePair; reminder_time: string;
+    consent_granted: boolean
   }): Promise<Patient> {
-    const r = await fetch(`${BASE}/patients`, {
+    return request('/patients', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     })
-    if (!r.ok) {
-      const err = await r.json()
-      throw new Error(err.detail || 'Enrollment failed')
-    }
-    return r.json()
+  },
+
+  async updateCommunication(id: number, data: Partial<{
+    preferred_language: LanguagePair; reminder_time: string;
+    consent_status: 'pending' | 'granted' | 'withdrawn';
+    communication_opt_in: boolean; paused: boolean
+  }>): Promise<Patient> {
+    return request(`/patients/${id}/communication`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
   },
 
   async getMessages(patientId: number): Promise<Message[]> {
-    const r = await fetch(`${BASE}/patients/${patientId}/messages?limit=80`)
-    return r.json()
+    return request(`/patients/${patientId}/messages?limit=80`)
   },
 
   async sendMessage(patientId: number, message: string) {
-    const r = await fetch(`${BASE}/patients/${patientId}/messages`, {
+    return request(`/patients/${patientId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
     })
-    return r.json()
   },
 
   /** Send a recorded voice note. `language` is a hint to the speech model;
@@ -186,22 +320,15 @@ export const api = {
     form.append('language', language)
     if (provider) form.append('provider', provider)
 
-    const r = await fetch(`${BASE}/patients/${patientId}/voice`, { method: 'POST', body: form })
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}))
-      throw new Error(err.detail || 'Voice note failed')
-    }
-    return r.json()
+    return request(`/patients/${patientId}/voice`, { method: 'POST', body: form })
   },
 
   async getSttStatus(): Promise<SttStatus> {
-    const r = await fetch(`${BASE}/stt/status`)
-    return r.json()
+    return request('/stt/status')
   },
 
   async getTtsStatus(): Promise<TtsStatus> {
-    const r = await fetch(`${BASE}/tts/status`)
-    return r.json()
+    return request('/tts/status')
   },
 
   voiceNoteUrl(filename: string) {
@@ -209,55 +336,46 @@ export const api = {
   },
 
   async sendOutreach(patientId: number, message: string): Promise<DeliveryResult> {
-    const r = await fetch(`${BASE}/patients/${patientId}/outreach`, {
+    return request(`/patients/${patientId}/outreach`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
     })
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}))
-      throw new Error(err.detail || 'Message could not be sent')
-    }
-    return r.json()
   },
 
   async sendReminder(patientId: number): Promise<DeliveryResult> {
-    const r = await fetch(`${BASE}/patients/${patientId}/remind`, { method: 'POST' })
-    if (!r.ok) throw new Error('Care reminder could not be sent')
-    return r.json()
+    return request(`/patients/${patientId}/remind`, { method: 'POST' })
   },
 
   async sendCheckin(patientId: number): Promise<DeliveryResult> {
-    const r = await fetch(`${BASE}/patients/${patientId}/checkin`, { method: 'POST' })
-    if (!r.ok) throw new Error('Check-in could not be sent')
-    return r.json()
+    return request(`/patients/${patientId}/checkin`, { method: 'POST' })
   },
 
   async getAlerts(): Promise<Escalation[]> {
-    const r = await fetch(`${BASE}/alerts`)
-    return r.json()
+    return request('/alerts')
+  },
+
+  async acknowledgeAlert(id: number): Promise<Record<string, unknown>> {
+    return request(`/alerts/${id}/acknowledge`, { method: 'POST' })
+  },
+
+  async getTodayWorklist(): Promise<TodayWorklist> {
+    return request('/worklist/today')
   },
 
   async getAppointments(): Promise<Appointment[]> {
-    const r = await fetch(`${BASE}/appointments`)
-    if (!r.ok) throw new Error('Appointments could not be loaded')
-    return r.json()
+    return request('/appointments')
   },
 
   async updateAppointment(
     id: number,
     data: Partial<Pick<Appointment, 'appointment_date' | 'appointment_time' | 'status'>>,
   ): Promise<Appointment> {
-    const r = await fetch(`${BASE}/appointments/${id}`, {
+    return request(`/appointments/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     })
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}))
-      throw new Error(err.detail || 'Appointment could not be updated')
-    }
-    return r.json()
   },
 
   async resolveAlert(id: number, data: {
@@ -265,20 +383,14 @@ export const api = {
     note?: string
     resolved_by?: string
   }): Promise<{ resolved: boolean; patient_id: number; risk_level: string; resolved_at: string }> {
-    const r = await fetch(`${BASE}/alerts/${id}/resolve`, {
+    return request(`/alerts/${id}/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     })
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}))
-      throw new Error(err.detail || 'Alert could not be resolved')
-    }
-    return r.json()
   },
 
   async getWeeklyReport(): Promise<{ report: string; generated_at: string }> {
-    const r = await fetch(`${BASE}/reports/weekly`)
-    return r.json()
+    return request('/reports/weekly')
   },
 }

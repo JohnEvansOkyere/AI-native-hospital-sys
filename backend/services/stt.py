@@ -1,8 +1,9 @@
 """
 Speech-to-text providers for VeloxaCare.
 
-One interface, four providers:
+One interface, five providers:
   - SaharaSTT:        Intron Sahara sync endpoint (African-built, code-switch aware)
+  - KhayaSTT:         GhanaNLP Khaya ASR v3 (Ghanaian-built: Twi, Ga, Ewe, Dagbani)
   - OpenAIWhisperSTT: OpenAI's hosted whisper-1 (frontier commercial default)
   - CartesiaSTT:      Cartesia Ink (commercial, latency-optimised)
   - LocalWhisperSTT:  faster-whisper open weights, fully local (zero API dependency)
@@ -22,6 +23,9 @@ each provider maps it to what its own API expects.
 
 import asyncio
 import os
+import shutil
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +45,30 @@ SAHARA_MIN_INTERVAL_S = 2.1
 # benchmark/probe_sahara.py, since "documented" and "enabled on your key" differ.
 SAHARA_LANG = {"en": "en", "tw-en": "tw", "pcm-en": "pcm", "gaa-en": "gaa"}
 SAHARA_LANG_FALLBACK = "en"
+
+# ── GhanaNLP Khaya ASR v3 ─────────────────────────────────────────────────────
+# POST {base}/transcribe?language={iso639-3} with the raw audio bytes as the
+# body and an Ocp-Apim-Subscription-Key header (Azure API Management). Endpoint
+# shapes verified against GhanaNLP's own client code (Khaya-AI/khaya-claude-skills),
+# not assumed from marketing copy. GET {base}/languages lists what a key accepts —
+# benchmark/probe_khaya.py wraps that, and per the Sahara lesson (documented ≠
+# shipped), run it before citing coverage anywhere.
+KHAYA_ASR_BASE = os.getenv("KHAYA_ASR_BASE_URL", "https://translation-api.ghananlp.org/asr/v3")
+
+# language_pair -> Khaya ISO 639-3 code. Khaya serves Ghanaian languages only:
+# there is no English or Pidgin model, so those pairs raise immediately (no
+# network call) and the chain moves on. Whether the twi/gaa/ewe models emit the
+# English half of code-switched speech — where the numerals and drug names live —
+# is exactly what trying Khaya is meant to measure; Sahara's monolingual tw model
+# returned empty transcripts on that input, so do not assume either behaviour.
+KHAYA_LANG = {"tw-en": "twi", "gaa-en": "gaa", "ewe-en": "ewe"}
+
+# Khaya accepts these containers only (no webm from MediaRecorder, no m4a from
+# phone recorders). Anything else is transcoded through ffmpeg when available.
+KHAYA_CONTENT_TYPES = {
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac",
+    ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
+}
 
 # ── Cartesia Ink ──────────────────────────────────────────────────────────────
 CARTESIA_STT_URL = "https://api.cartesia.ai/stt"
@@ -65,7 +93,23 @@ LANGUAGE_LABELS = {
     "tw-en": "Twi–English",
     "pcm-en": "Pidgin–English",
     "gaa-en": "Ga–English",
+    "ewe-en": "Ewe–English",
 }
+
+
+class LanguageNotSupported(ValueError):
+    """A provider has no model for this language pair — raised before any network
+    call, and *not* a fault.
+
+    The distinction matters in two places that both got it wrong when this was a
+    plain ValueError. The live chain marked a provider `_degraded` for declining
+    a pair it never claimed to serve, so `/api/stt/status` reported Khaya as
+    broken every time an English voice note arrived. And the benchmark scored the
+    declined pair as WER 1.0, dragging a specialist's overall figure toward
+    "catastrophic" using clips it structurally cannot transcribe.
+
+    Declining is a correct answer. Only failing is a failure.
+    """
 
 
 @dataclass
@@ -114,6 +158,79 @@ class SaharaSTT:
             )
         resp.raise_for_status()
         return resp.json()["data"]["audio_transcript"]
+
+
+class KhayaSTT:
+    """GhanaNLP Khaya ASR v3 — the Ghanaian-built counterpart to Sahara.
+
+    Where Sahara is pan-African with Ghanaian codes in its table, Khaya is
+    built *for* Ghanaian languages (Twi, Ga, Ewe, Dagbani, Frafra) by the
+    GhanaNLP team. It only speaks those languages: an English or Pidgin request
+    raises before any network I/O, which makes it free to keep in the default
+    chain — it simply never fires for pairs it cannot serve.
+    """
+
+    name = "khaya"
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.getenv("KHAYA_API_KEY")
+        if not self.api_key:
+            raise ValueError("KHAYA_API_KEY not set")
+
+    def transcribe(self, audio_path: str, language: str = "en") -> str:
+        lang = KHAYA_LANG.get(language)
+        if lang is None:
+            raise LanguageNotSupported(f"khaya has no model for '{language}' "
+                                       f"(serves: {sorted(KHAYA_LANG)})")
+
+        path = Path(audio_path)
+        content_type = KHAYA_CONTENT_TYPES.get(path.suffix.lower())
+        cleanup = None
+        if content_type is None:
+            # webm (browser simulator) and m4a (phone recorders, the benchmark
+            # corpus) are not containers Khaya takes — transcode to WAV when
+            # ffmpeg exists. Absent ffmpeg (e.g. Vercel) this raises and the
+            # chain falls through, which is the contract everywhere else too.
+            path = _to_wav(path)
+            cleanup = path
+            content_type = "audio/wav"
+
+        try:
+            resp = requests.post(
+                f"{KHAYA_ASR_BASE}/transcribe",
+                params={"language": lang},
+                headers={"Ocp-Apim-Subscription-Key": self.api_key,
+                         "Content-Type": content_type},
+                data=path.read_bytes(),
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json().get("text", "")
+        finally:
+            if cleanup is not None:
+                cleanup.unlink(missing_ok=True)
+
+
+def _to_wav(path: Path) -> Path:
+    """Transcode to 16 kHz mono WAV for providers that reject the container.
+    Audio-level and channel-blind, so it belongs in this layer."""
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError(
+            f"khaya does not accept '{path.suffix}' and ffmpeg is not installed "
+            f"to convert it (accepts: {sorted(KHAYA_CONTENT_TYPES)})"
+        )
+    fd, tmp_name = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    out = Path(tmp_name)
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(path),
+         "-ar", "16000", "-ac", "1", str(out)],
+        capture_output=True, text=True, timeout=60,
+    )
+    if proc.returncode != 0:
+        out.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg failed on {path.name}: {proc.stderr.strip()[:200]}")
+    return out
 
 
 class OpenAIWhisperSTT:
@@ -222,6 +339,7 @@ class LocalWhisperSTT:
 REGISTRY = {
     "sahara": SaharaSTT,
     "sahara_en": SaharaEnglishSTT,
+    "khaya": KhayaSTT,
     "openai": OpenAIWhisperSTT,
     "cartesia": CartesiaSTT,
     "local": LocalWhisperSTT,
@@ -229,8 +347,10 @@ REGISTRY = {
 
 # Order the live agent tries when STT_PROVIDER isn't pinned. Sahara first —
 # it's the one built for the code-switching this product actually receives.
+# Khaya second: for Ghanaian pairs it is a genuine specialist; for anything
+# else it declines instantly with no network call, so it costs nothing.
 # Local last: it always works, so anything after it would be unreachable.
-DEFAULT_ORDER = ["sahara", "cartesia", "openai", "local"]
+DEFAULT_ORDER = ["sahara", "khaya", "cartesia", "openai", "local"]
 
 
 def build_providers(names: list[str]) -> list:
@@ -275,6 +395,8 @@ def configured_providers() -> list[str]:
     out = []
     if os.getenv("INTRON_API_KEY"):
         out.append("sahara")
+    if os.getenv("KHAYA_API_KEY"):
+        out.append("khaya")
     if os.getenv("OPENAI_API_KEY"):
         out.append("openai")
     if os.getenv("CARTESIA_API_KEY"):
@@ -309,6 +431,12 @@ def transcribe_sync(audio_path: str, language: str = "en",
         started = time.time()
         try:
             text = p.transcribe(audio_path, language=language)
+        except LanguageNotSupported as e:
+            # Not a fault — this provider never claimed this pair. Move on
+            # without marking it degraded, or the status endpoint reports a
+            # specialist as broken for doing the right thing.
+            errors.append(f"{name}: {e}")
+            continue
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}: {e}")
             _degraded[name] = str(e)[:200]

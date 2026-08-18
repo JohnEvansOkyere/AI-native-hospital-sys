@@ -40,3 +40,11 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Untranscoded originals of the same consent-bound recordings.
+benchmark/audio_original/
+# Staging area for the optional public dataset. Metadata and the dataset card
+# are safe to track; audio is not, and only ships if every speaker ticked the
+# release opt-in on the consent form.
+benchmark/dataset_release/*.m4a
+benchmark/dataset_release/audio/

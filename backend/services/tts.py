@@ -1,7 +1,8 @@
 """
 Text-to-speech providers for VeloxaCare.
 
-The mirror image of stt.py: one interface, two providers.
+The mirror image of stt.py: one interface, three providers.
+  - KhayaTTS:    GhanaNLP Khaya TTS v2 — the only real Twi (and Ewe) voice we have
   - IntronTTS:   Intron's synchronous /tts/v1/generate (African accents, Pidgin)
   - CartesiaTTS: Cartesia Sonic (latency-optimised, broad commercial default)
 
@@ -90,6 +91,30 @@ INTRON_VOICE = {
     "tw-en":  ("en", INTRON_TTS_ACCENT),
     "gaa-en": ("en", INTRON_TTS_ACCENT),
 }
+
+# ── GhanaNLP Khaya TTS v2 ─────────────────────────────────────────────────────
+# POST {base}/synthesize with {"text", "language", "format", "speaker_id"} and
+# an Ocp-Apim-Subscription-Key header; raw audio bytes come back. Verified
+# against GhanaNLP's own client code (Khaya-AI/khaya-claude-skills). GET
+# {base}/languages and {base}/speakers report what a key can actually voice —
+# benchmark/probe_khaya.py wraps both. Documented ≠ shipped applies here too.
+#
+# This changes the honest position stated below for Intron: Twi and Ewe now DO
+# have a real voice — Khaya's. The caveat that survives: the reply text the bot
+# writes is English, and a Twi voice reading English text is worse than an
+# accented English voice doing it. So KhayaTTS only accepts languages in
+# KHAYA_TTS_LANG, and the caller is responsible for handing it text that is
+# actually in that language (services/translate.py exists for exactly this).
+KHAYA_TTS_BASE = os.getenv("KHAYA_TTS_BASE_URL", "https://translation-api.ghananlp.org/tts/v2")
+KHAYA_TTS_TIMEOUT_S = float(os.getenv("KHAYA_TTS_TIMEOUT_S", "30"))
+
+# language_pair -> Khaya ISO 639-3 TTS code. Twi and Ewe voices are announced
+# by GhanaNLP; Ga is not listed for TTS (only for ASR/translation), so gaa-en
+# is deliberately absent until /speakers says otherwise.
+KHAYA_TTS_LANG = {"tw-en": "twi", "ewe-en": "ewe"}
+
+# male_low | male_high | female — per GhanaNLP's client these work across languages.
+KHAYA_TTS_SPEAKER = os.getenv("KHAYA_TTS_SPEAKER", "female")
 
 # ── Cartesia TTS ──────────────────────────────────────────────────────────────
 # docs.cartesia.ai/api-reference/tts/bytes — returns raw audio bytes, no polling.
@@ -216,6 +241,54 @@ class IntronTTS:
         return audio.content, fmt, f"{voice_accent}/{voice_language}"
 
 
+class KhayaTTS:
+    """GhanaNLP Khaya TTS v2 — a voice that actually speaks Twi and Ewe.
+
+    Strictly a specialist: it refuses languages outside KHAYA_TTS_LANG rather
+    than reading English text in a Twi voice, so in the default chain it only
+    ever fires for pairs it genuinely serves and everything else falls through
+    to Intron/Cartesia exactly as before.
+
+    Khaya offers ogg output too, but WhatsApp only accepts Ogg when the codec
+    inside is Opus and Khaya does not document which codec it uses — so this
+    client declares mp3/wav only until that is verified with real bytes.
+    WhatsApp takes mp3 (audio/mpeg) happily, just as a file rather than a
+    voice-note bubble.
+    """
+
+    name = "khaya"
+
+    CONTAINERS = ("mp3", "wav")
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.getenv("KHAYA_API_KEY")
+        if not self.api_key:
+            raise ValueError("KHAYA_API_KEY not set")
+
+    def synthesize(self, text: str, language: str, accept: tuple) -> tuple[bytes, str, str]:
+        lang = KHAYA_TTS_LANG.get(language)
+        if lang is None:
+            raise ValueError(f"khaya has no voice for '{language}' "
+                             f"(speaks: {sorted(KHAYA_TTS_LANG)})")
+        fmt = next((f for f in accept if f in self.CONTAINERS), None)
+        if fmt is None:
+            raise ValueError(f"khaya cannot produce any of {accept}")
+
+        speaker = os.getenv("KHAYA_TTS_SPEAKER", KHAYA_TTS_SPEAKER)
+        resp = requests.post(
+            f"{KHAYA_TTS_BASE}/synthesize",
+            headers={"Ocp-Apim-Subscription-Key": self.api_key,
+                     "Content-Type": "application/json"},
+            json={"text": text, "language": lang, "format": fmt,
+                  "speaker_id": speaker},
+            timeout=KHAYA_TTS_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        if not resp.content:
+            raise RuntimeError("khaya returned an empty audio body")
+        return resp.content, fmt, f"{lang}/{speaker}"
+
+
 class CartesiaTTS:
     """Cartesia Sonic — https://docs.cartesia.ai/api-reference/tts/bytes
 
@@ -268,13 +341,18 @@ class CartesiaTTS:
 
 
 REGISTRY = {
+    "khaya": KhayaTTS,
     "intron": IntronTTS,
     "cartesia": CartesiaTTS,
 }
 
-# Order tried when TTS_PROVIDER isn't pinned. Intron first: a West African voice
-# is the point, and Cartesia is the fallback that guarantees the patient hears
-# *something*. Unlike STT there is no offline tier — synthesis needs a network.
+# Order tried when TTS_PROVIDER isn't pinned. Khaya first: for the two languages
+# it speaks it is the only real voice, and for everything else it declines
+# before any network I/O — but note it only makes sense when the caller passed
+# text in that language (see speak-path in main.py). Then Intron: a West African
+# voice is the point, and Cartesia is the fallback that guarantees the patient
+# hears *something*. Unlike STT there is no offline tier — synthesis needs a
+# network.
 #
 # The trade-off is real and worth measuring before you accept this default.
 # On a one-sentence reply (5 Aug 2026, from Accra): Intron 17–25s, Cartesia 2.8s.
@@ -282,7 +360,7 @@ REGISTRY = {
 # accent the patient recognises is worth more than latency in a channel nobody
 # holds to their ear. If your deployment disagrees, set TTS_ORDER=cartesia,intron
 # — which keeps the fallback, unlike pinning TTS_PROVIDER.
-DEFAULT_ORDER = ["intron", "cartesia"]
+DEFAULT_ORDER = ["khaya", "intron", "cartesia"]
 
 
 def provider_order() -> list[str]:
@@ -354,6 +432,8 @@ def get_provider(name: str):
 def configured_providers() -> list[str]:
     """Which providers could plausibly run, by config alone."""
     out = []
+    if os.getenv("KHAYA_API_KEY"):
+        out.append("khaya")
     if os.getenv("INTRON_API_KEY"):
         out.append("intron")
     if os.getenv("CARTESIA_API_KEY"):

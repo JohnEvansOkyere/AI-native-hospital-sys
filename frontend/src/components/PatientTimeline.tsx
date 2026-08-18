@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Activity, AlertTriangle, Bell, ClipboardCheck, Loader2, Mic,
-  MessageCircle, Phone, Pill, Radio, Send, User, Volume2,
+  MessageCircle, PauseCircle, Phone, Pill, PlayCircle, Radio, Send, ShieldCheck, User, Volume2,
 } from 'lucide-react'
 import { api, Message, Patient } from '../api/client'
 import {
@@ -92,6 +92,17 @@ function MessageBubble({ msg }: { msg: Message }) {
               <Radio size={8} /> {channelLabel(msg.channel)}
             </span>
           )}
+          {isClinic && msg.delivery_status === 'accepted' && (
+            <span className="text-amber-600">Meta accepted · awaiting delivery</span>
+          )}
+          {isClinic && ['sent', 'delivered', 'read'].includes(msg.delivery_status || '') && (
+            <span className="text-emerald-600 capitalize">{msg.delivery_status}</span>
+          )}
+          {isClinic && msg.delivery_status === 'failed' && (
+            <span className="text-red-600" title={msg.delivery_error || 'WhatsApp delivery failed'}>
+              Not sent{msg.delivery_error ? ` · ${msg.delivery_error}` : ''}
+            </span>
+          )}
           {msg.reason && msg.reason !== 'null' && (
             <span className={`px-1.5 rounded-full font-medium ${
               isClinic ? reasonStyle[msg.reason] || 'bg-slate-100 text-slate-500' : 'bg-emerald-700 text-white'}`}>
@@ -109,6 +120,7 @@ export function PatientTimeline({ patient, refreshKey = 0, onActivity }: Props) 
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState('')
   const [actionBusy, setActionBusy] = useState<'reminder' | 'checkin' | 'message' | null>(null)
+  const [settingsBusy, setSettingsBusy] = useState(false)
   const [actionStatus, setActionStatus] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const seq = useRef(0)
@@ -158,6 +170,23 @@ export function PatientTimeline({ patient, refreshKey = 0, onActivity }: Props) 
     }
   }
 
+  async function updateCommunication(data: Parameters<typeof api.updateCommunication>[1]) {
+    setSettingsBusy(true)
+    setActionStatus(null)
+    try {
+      await api.updateCommunication(patient.id, data)
+      setActionStatus({ tone: 'success', text: 'Patient communication settings updated.' })
+      onActivity?.()
+    } catch (error) {
+      setActionStatus({ tone: 'error', text: error instanceof Error ? error.message : 'Settings could not be updated' })
+    } finally {
+      setSettingsBusy(false)
+    }
+  }
+
+  const communicationActive = patient.consent_status === 'granted'
+    && Boolean(patient.communication_opt_in) && !Boolean(patient.paused)
+
   return (
     <div className="flex flex-col h-full gap-2 min-h-0">
       {/* Compact context: enough to act safely, without burying the chat. */}
@@ -192,14 +221,34 @@ export function PatientTimeline({ patient, refreshKey = 0, onActivity }: Props) 
               <AlertTriangle size={11} /> {patient.escalations.length} open alert{patient.escalations.length > 1 ? 's' : ''}
             </span>
           )}
+          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${
+            communicationActive ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+          }`}>
+            <ShieldCheck size={11} />
+            {patient.consent_status === 'pending' ? 'Consent pending' : patient.consent_status === 'withdrawn' ? 'Consent withdrawn' : patient.paused ? 'Messages paused' : 'Messaging active'}
+          </span>
 
           <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => runAction('reminder')} disabled={actionBusy !== null}
+          {patient.consent_status !== 'granted' ? (
+            <button onClick={() => updateCommunication({ consent_status: 'granted', communication_opt_in: true, paused: false })}
+              disabled={settingsBusy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+              <ShieldCheck size={12} /> Record consent
+            </button>
+          ) : (
+            <button onClick={() => updateCommunication({ paused: !Boolean(patient.paused) })}
+              disabled={settingsBusy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+              {patient.paused ? <PlayCircle size={12} /> : <PauseCircle size={12} />}
+              {patient.paused ? 'Resume messages' : 'Pause messages'}
+            </button>
+          )}
+          <button onClick={() => runAction('reminder')} disabled={actionBusy !== null || !communicationActive}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50 transition">
             {actionBusy === 'reminder' ? <Loader2 size={12} className="animate-spin" /> : <Bell size={12} />}
             Send care reminder
           </button>
-          <button onClick={() => runAction('checkin')} disabled={actionBusy !== null}
+          <button onClick={() => runAction('checkin')} disabled={actionBusy !== null || !communicationActive}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50 transition">
             {actionBusy === 'checkin' ? <Loader2 size={12} className="animate-spin" /> : <ClipboardCheck size={12} />}
             Request check-in
@@ -247,7 +296,7 @@ export function PatientTimeline({ patient, refreshKey = 0, onActivity }: Props) 
               placeholder={`Message ${patient.name.split(' ')[0]}…`}
               className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" />
           </div>
-          <button type="submit" disabled={actionBusy !== null || !draft.trim()}
+          <button type="submit" disabled={actionBusy !== null || !draft.trim() || !communicationActive}
             className="h-9 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
             {actionBusy === 'message' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
             Send

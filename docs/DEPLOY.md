@@ -30,30 +30,53 @@ Services are internal by default; the top-level rewrites are what expose them.
 Routing into a service is final: if nothing inside matches, FastAPI's own 404 is
 returned rather than falling through to the frontend.
 
-## 1. Database — required
+## 1. Supabase PostgreSQL — required
 
-**Do this before the first deploy.** SQLite does not survive serverless: the
-bundle is read-only apart from `/tmp`, and `/tmp` is per-instance and wiped on
-cold start. Without Turso, patient replies, escalations and adherence logs vanish
-after a few minutes of idle, and two concurrent instances disagree about state.
+**Do this before the first deploy.** SQLite does not survive serverless. The
+production source of truth is Supabase PostgreSQL; SQLite remains the local,
+zero-configuration development store.
 
-[Turso](https://turso.tech) is libSQL — SQLite over HTTP — so the schema, the
-seed data and every query in `db.py` are unchanged.
+Create a Supabase project in the closest suitable region. In the project,
+click **Connect** and copy both pooler strings:
 
-```bash
-curl -sSfL https://get.tur.so/install.sh | bash
-turso auth signup
-turso db create veloxacare
-turso db show --url veloxacare        # → TURSO_DATABASE_URL
-turso db tokens create veloxacare     # → TURSO_AUTH_TOKEN
+- **Session pooler, port 5432:** use locally to apply migrations.
+- **Transaction pooler, port 6543:** use as `DATABASE_URL` on Vercel.
+
+The transaction pooler is designed for temporary serverless connections. The
+backend disables asyncpg's prepared-statement cache for this mode. These are
+PostgreSQL URLs, not the `https://...supabase.co` project URL and not an anon or
+service-role key. See Supabase's [connection
+guide](https://supabase.com/docs/guides/database/connecting-to-postgres).
+
+Put both pooler strings in the repository-root `.env` (the project's only local
+environment file), then apply the checked-in
+schema from the repository root. Use the string copied by Supabase; if you
+manually substitute a password containing reserved URL characters, URL-encode
+it first.
+
+```dotenv
+MIGRATION_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@<pooler-host>:5432/postgres?sslmode=require
 ```
 
-`init_db()` creates the schema and seeds on first boot, exactly as it does
-locally. To reset a deployed demo, `turso db shell veloxacare` and drop the
-tables, then redeploy.
+```bash
+backend/.venv/bin/python backend/migrate.py
+backend/.venv/bin/python backend/verify_database.py
+```
 
-Locally nothing changes: with `TURSO_DATABASE_URL` unset, `db.connect()` opens
-the SQLite file directly.
+Migration `001_initial.sql` enables Row Level Security on every application
+table and deliberately creates no browser policies. Clinical data therefore
+stays behind FastAPI; the frontend never receives a database password or
+service-role key. Supabase recommends RLS for every table in an exposed schema:
+[RLS guidance](https://supabase.com/docs/guides/database/postgres/row-level-security).
+
+With `APP_ENV=production`, demo patients are never seeded. Locally, with
+`DATABASE_URL` unset, `db.connect()` opens SQLite directly. Turso remains a
+temporary compatibility path only and no longer satisfies production checks.
+
+This tranche moves the clinical database, not every Supabase product at once.
+Staff login still uses VeloxaCare's database-backed sessions, and voice audio is
+still best-effort on `/tmp`. Supabase Auth and Storage are separate, reviewable
+cutovers after the database is live; neither is being represented as complete.
 
 ## 2. Environment variables
 
@@ -62,18 +85,22 @@ is shared across both services.
 
 | Variable | Needed for |
 |---|---|
-| `TURSO_DATABASE_URL` | persistence — **required** |
-| `TURSO_AUTH_TOKEN` | persistence — **required** |
+| `APP_ENV=production` | disables demo data/tools and enforces production configuration |
+| `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | first production staff account |
+| `DATABASE_URL` | Supabase transaction-pooler PostgreSQL URL — **required** |
 | `GROQ_API_KEY` | AI reason detection + weekly report |
 | `META_ACCESS_TOKEN` | sending WhatsApp replies |
 | `META_PHONE_NUMBER_ID` | sending WhatsApp replies |
 | `META_VERIFY_TOKEN` | webhook handshake |
 | `META_APP_SECRET` | **signature verification — set this in production** |
+| `META_MEDICATION_REMINDER_TEMPLATE` | approved daily reminder template — **required** |
+| `CRON_SECRET` | authenticates scheduled reminder calls — **required** |
 | `INTRON_API_KEY` / `CARTESIA_API_KEY` / `OPENAI_API_KEY` | voice notes |
 | `WHATSAPP_STT_LANGUAGE` | voice-note language hint (default `en`) |
 
-Everything except the Turso pair degrades gracefully — the app still boots and
-serves without them. Turso is the one that genuinely changes behaviour.
+Local development degrades gracefully. Production mode instead reports missing
+launch-critical values in `/health` and refuses protected clinical API traffic;
+that prevents a public deployment from quietly behaving like a demo.
 
 `META_APP_SECRET` deserves emphasis: unset, `verify_signature()` returns `True`
 and the webhook accepts unsigned requests from anyone who finds the URL. That is
@@ -93,7 +120,14 @@ Or connect the repo in the Vercel dashboard and push. Confirm afterwards:
 curl https://<project>.vercel.app/health
 ```
 
-You want `"whatsapp_configured": true`. Then open the dashboard at `/`.
+You want `"status": "ok"`, `"database": "supabase-postgres"`,
+`"whatsapp_configured": true`, and an empty
+`"missing_production_config"`. Then open the dashboard and sign in.
+
+The first production boot creates the bootstrap admin only when the staff table
+is empty. After verifying sign-in, rotate or remove
+`BOOTSTRAP_ADMIN_PASSWORD`. Follow the full [production pilot
+runbook](PRODUCTION-PILOT.md) before enrolling patients.
 
 ## 4. Point WhatsApp at it
 

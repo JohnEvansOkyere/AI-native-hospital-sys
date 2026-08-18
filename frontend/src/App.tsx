@@ -1,14 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { api, Appointment, Patient, Message, Escalation, LanguagePair, SttStatus, TtsStatus } from './api/client'
+import { api, Appointment, AuthSession, AuthenticationRequired, Patient, Message, Escalation, LanguagePair, SttStatus, TtsStatus } from './api/client'
 import { voiceLabel } from './components/shared'
 import { ClinicDashboard } from './components/ClinicDashboard'
+import { PatientConversations } from './components/PatientConversations'
 import { CareActionPanel } from './components/CareActionPanel'
 import { AppointmentsPanel } from './components/AppointmentsPanel'
+import { LoginScreen } from './components/LoginScreen'
+import { AdminSettings } from './components/AdminSettings'
 import ReactMarkdown from 'react-markdown'
 import {
   Activity, AlertTriangle, Bell, CalendarDays, CheckCircle, ChevronRight,
   Clock, FileText, Heart, MessageCircle, Mic, Phone, Plus,
-  RefreshCw, Send, Shield, Trash2, TrendingUp, User, Volume2, X, Zap
+  LogOut, RefreshCw, Send, Settings, Shield, Trash2, TrendingUp, User, Volume2, X, Zap
 } from 'lucide-react'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -31,11 +34,12 @@ const riskLabel = { green: 'On Track', amber: 'Watch', red: 'Urgent' }
 // by another instance can't reach this one's sockets, so callers pair this with
 // a slow poll: the socket gives instant updates in the common case, the poll
 // guarantees the dashboard converges in the uncommon one.
-function useLiveSocket(path: string, onEvent: (data: any) => void) {
+function useLiveSocket(path: string, onEvent: (data: any) => void, enabled = true) {
   const handlerRef = useRef(onEvent)
   handlerRef.current = onEvent
 
   useEffect(() => {
+    if (!enabled) return
     let ws: WebSocket | null = null
     let retry: ReturnType<typeof setTimeout> | undefined
     let attempt = 0
@@ -72,7 +76,7 @@ function useLiveSocket(path: string, onEvent: (data: any) => void) {
       // for a socket this effect is tearing down.
       if (ws) { ws.onclose = null; ws.close() }
     }
-  }, [path])
+  }, [path, enabled])
 }
 
 // How often to reconcile with the server when no socket event arrives. Slow
@@ -87,6 +91,8 @@ const LANGUAGE_OPTIONS: { value: LanguagePair; label: string; short: string }[] 
   { value: 'en', label: 'English', short: 'EN' },
   { value: 'tw-en', label: 'Twi–English', short: 'TW' },
   { value: 'pcm-en', label: 'Pidgin–English', short: 'PCM' },
+  { value: 'gaa-en', label: 'Ga–English', short: 'GA' },
+  { value: 'ewe-en', label: 'Ewe–English', short: 'EWE' },
 ]
 
 function providerLabel(p: string): string {
@@ -94,6 +100,7 @@ function providerLabel(p: string): string {
   if (p === 'openai_whisper') return 'Whisper API'
   if (p === 'sahara') return 'Intron Sahara'
   if (p === 'cartesia') return 'Cartesia Ink'
+  if (p === 'khaya') return 'GhanaNLP Khaya'
   return p
 }
 
@@ -221,6 +228,11 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
 
   useLiveSocket(`/ws/${patient.id}`, useCallback((data: any) => {
     if (data.type === 'message') addMessage(data.message)
+    if (data.type === 'message_delivery') {
+      setMessages(prev => prev.map(message => message.id === data.message_id
+        ? { ...message, delivery_status: data.delivery_status, delivery_error: data.delivery_error }
+        : message))
+    }
     if (data.type === 'patient_updated') onUpdate()
   }, [onUpdate, addMessage]))
 
@@ -497,6 +509,12 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
                   )}
                   <span className="absolute bottom-1 right-2 text-[10px] text-slate-400 flex items-center gap-0.5">
                     {formatTime(msg.created_at)}
+                    {isOut && msg.delivery_status === 'failed' && (
+                      <span className="text-red-500" title={msg.delivery_error || 'WhatsApp delivery failed'}> · not sent</span>
+                    )}
+                    {isOut && ['sent', 'delivered', 'read'].includes(msg.delivery_status || '') && (
+                      <span className="text-[#4FC3F7]">✓✓</span>
+                    )}
                     {!isOut && <span className="text-[#4FC3F7]">✓✓</span>}
                   </span>
                 </div>
@@ -735,16 +753,23 @@ function AlertsPanel({ alerts, onResolve }: { alerts: Escalation[]; onResolve: (
 
 // ── Enroll Modal ───────────────────────────────────────────────────────────
 
-function EnrollModal({ onClose, onEnrolled }: { onClose: () => void; onEnrolled: (p: Patient) => void }) {
+function EnrollModal({ onClose, onEnrolled, pilotOnly }: {
+  onClose: () => void; onEnrolled: (p: Patient) => void; pilotOnly: boolean
+}) {
+  const initialCategory: CareCategory = pilotOnly ? 'chronic' : 'dental'
   const [form, setForm] = useState({
-    name: '', phone: '+233', age: '', category: 'dental' as CareCategory,
-    condition: categoryDefaults.dental.condition,
-    drug_name: '', drug_dosage: '', service_type: categoryDefaults.dental.service_type,
-    care_instructions: categoryDefaults.dental.care_instructions,
-    next_follow_up: '', recall_date: '', doctor_name: 'Dr. Mensah'
+    name: '', phone: '+233', age: '', category: initialCategory as CareCategory,
+    condition: categoryDefaults[initialCategory].condition,
+    drug_name: pilotOnly ? 'Amlodipine' : '', drug_dosage: pilotOnly ? '5mg once daily' : '',
+    service_type: categoryDefaults[initialCategory].service_type,
+    care_instructions: categoryDefaults[initialCategory].care_instructions,
+    next_follow_up: '', recall_date: '', doctor_name: 'Dr. Mensah',
+    preferred_language: 'en' as LanguagePair, reminder_time: '08:00',
+    consent_granted: false,
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [enrolled, setEnrolled] = useState<Patient | null>(null)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -753,6 +778,7 @@ function EnrollModal({ onClose, onEnrolled }: { onClose: () => void; onEnrolled:
     try {
       const p = await api.enrollPatient({ ...form, age: form.age ? Number(form.age) : null })
       onEnrolled(p)
+      setEnrolled(p)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to enroll')
     } finally {
@@ -771,6 +797,40 @@ function EnrollModal({ onClose, onEnrolled }: { onClose: () => void; onEnrolled:
       drug_name: category === 'chronic' ? 'Amlodipine' : '',
       drug_dosage: category === 'chronic' ? '5mg once daily' : '',
     }))
+  }
+
+  if (enrolled) {
+    const delivery = enrolled.welcome_delivery
+    const sent = delivery?.delivered === true
+    return (
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="p-6 text-center">
+            <div className={`mx-auto w-12 h-12 rounded-full flex items-center justify-center ${
+              sent ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+            }`}>
+              {sent ? <CheckCircle size={24} /> : <AlertTriangle size={24} />}
+            </div>
+            <h2 className="mt-3 text-lg font-bold text-slate-800">Patient added</h2>
+            <p className="mt-1 text-sm text-slate-500">{enrolled.name} is now in the care dashboard.</p>
+            <div className={`mt-4 rounded-xl border p-3 text-left ${
+              sent ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'
+            }`}>
+              <p className={`text-sm font-semibold ${sent ? 'text-emerald-800' : 'text-amber-800'}`}>
+                {sent ? 'Welcome accepted by WhatsApp' : 'WhatsApp welcome not sent'}
+              </p>
+              <p className={`mt-1 text-xs leading-relaxed ${sent ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {delivery?.note || 'No WhatsApp delivery result was returned.'}
+              </p>
+            </div>
+            <button onClick={onClose}
+              className="mt-5 w-full rounded-xl bg-slate-900 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -806,7 +866,9 @@ function EnrollModal({ onClose, onEnrolled }: { onClose: () => void; onEnrolled:
               <label className="text-xs font-medium text-slate-600 block mb-1">Care category</label>
               <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-emerald-400"
                 value={form.category} onChange={e => changeCategory(e.target.value as CareCategory)}>
-                {(Object.keys(categoryLabels) as CareCategory[]).map(category => (
+                {(Object.keys(categoryLabels) as CareCategory[])
+                  .filter(category => !pilotOnly || category === 'chronic')
+                  .map(category => (
                   <option key={category} value={category}>{categoryLabels[category]}</option>
                 ))}
               </select>
@@ -857,6 +919,31 @@ function EnrollModal({ onClose, onEnrolled }: { onClose: () => void; onEnrolled:
               <input className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-400"
                 placeholder="Dr. Mensah" value={form.doctor_name} onChange={e => setForm(f => ({ ...f, doctor_name: e.target.value }))} />
             </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">Preferred language</label>
+              <select value={form.preferred_language}
+                onChange={e => setForm(f => ({ ...f, preferred_language: e.target.value as LanguagePair }))}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-emerald-400">
+                {LANGUAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">Reminder time</label>
+              <input type="time" value={form.reminder_time}
+                onChange={e => setForm(f => ({ ...f, reminder_time: e.target.value }))}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-400" />
+            </div>
+            <label className="col-span-2 flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 cursor-pointer">
+              <input type="checkbox" checked={form.consent_granted}
+                onChange={e => setForm(f => ({ ...f, consent_granted: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600" />
+              <span>
+                <span className="block text-xs font-semibold text-slate-700">Patient consent recorded</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">
+                  The patient agreed to receive WhatsApp care messages. If unchecked, the patient is saved but no welcome or reminder is sent.
+                </span>
+              </span>
+            </label>
           </div>
           </div>
           <div className="flex-shrink-0 border-t bg-white p-5 pt-3">
@@ -899,7 +986,7 @@ function ReportModal({ onClose }: { onClose: () => void }) {
           {loading ? (
             <div className="flex flex-col items-center justify-center h-48 gap-3 text-slate-400">
               <RefreshCw size={28} className="animate-spin text-emerald-500" />
-              <p className="text-sm">Claude is generating your report…</p>
+              <p className="text-sm">VeloxaCare AI is generating your report…</p>
             </div>
           ) : (
             <div className="prose prose-sm prose-emerald max-w-none">
@@ -909,7 +996,7 @@ function ReportModal({ onClose }: { onClose: () => void }) {
         </div>
         {!loading && (
           <div className="p-4 border-t flex items-center justify-between">
-            <span className="text-xs text-slate-400">Generated by Claude AI · {generatedAt ? new Date(generatedAt).toLocaleString() : ''}</span>
+            <span className="text-xs text-slate-400">Generated by VeloxaCare AI · {generatedAt ? new Date(generatedAt).toLocaleString() : ''}</span>
             <button onClick={() => window.print()}
               className="text-sm bg-emerald-600 text-white px-4 py-2 rounded-xl hover:bg-emerald-700 flex items-center gap-2">
               <FileText size={14} /> Print / Save PDF
@@ -924,30 +1011,47 @@ function ReportModal({ onClose }: { onClose: () => void }) {
 // ── Main App ───────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [session, setSession] = useState<AuthSession | null>(null)
+  const [checkingSession, setCheckingSession] = useState(true)
   const [patients, setPatients] = useState<Patient[]>([])
   const [alerts, setAlerts] = useState<Escalation[]>([])
   const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [clinicName, setClinicName] = useState('Clinic workspace')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [showEnroll, setShowEnroll] = useState(false)
   const [showReport, setShowReport] = useState(false)
   const [activeAlert, setActiveAlert] = useState<Escalation | null>(null)
   const [loading, setLoading] = useState(true)
-  // 'clinic' is the real product surface; 'demo' is the WhatsApp simulator kept
-  // as a fallback for when the live webhook can't be reached.
-  const [view, setView] = useState<'clinic' | 'appointments' | 'demo'>('clinic')
+  // Overview and conversations are deliberately separate product surfaces:
+  // one helps staff prioritise work, the other gives patient chat room to breathe.
+  const [view, setView] = useState<'clinic' | 'conversations' | 'appointments' | 'settings' | 'demo'>('clinic')
   // Bumped whenever a message lands, so the open patient timeline refetches.
   const [refreshKey, setRefreshKey] = useState(0)
 
   const loadData = useCallback(async () => {
-    const [ps, as, aps] = await Promise.all([api.getPatients(), api.getAlerts(), api.getAppointments()])
-    setPatients(ps)
-    setAlerts(as)
-    setAppointments(aps)
-    if (!selectedId && ps.length > 0) setSelectedId(ps[0].id)
-    setLoading(false)
+    try {
+      const [ps, as, aps, clinic] = await Promise.all([
+        api.getPatients(), api.getAlerts(), api.getAppointments(), api.getClinicSettings(),
+      ])
+      setPatients(ps)
+      setAlerts(as)
+      setAppointments(aps)
+      setClinicName(clinic.clinic_name)
+      if (!selectedId && ps.length > 0) setSelectedId(ps[0].id)
+      setLoading(false)
+    } catch (reason) {
+      if (reason instanceof AuthenticationRequired) setSession(null)
+      else throw reason
+    }
   }, [selectedId])
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    api.me().then(setSession).catch(() => setSession(null)).finally(() => setCheckingSession(false))
+  }, [])
+
+  useEffect(() => {
+    if (session) loadData()
+  }, [session])
 
   // Global WebSocket for cross-patient events
   useLiveSocket('/ws/-1', useCallback((data: any) => {
@@ -981,15 +1085,19 @@ export default function App() {
     if (data.type === 'message') {
       setRefreshKey(k => k + 1)
     }
-  }, []))
+    if (data.type === 'message_delivery') {
+      setRefreshKey(k => k + 1)
+    }
+  }, []), Boolean(session))
 
   // Backstop for the patient list and the alert queue. Escalations are the
   // safety-critical ones: a red flag raised on another instance must not sit
   // invisible on the clinic screen because a broadcast missed this socket.
   useEffect(() => {
+    if (!session) return
     const id = setInterval(loadData, POLL_MS)
     return () => clearInterval(id)
-  }, [loadData])
+  }, [loadData, session])
 
   const selected = patients.find(p => p.id === selectedId) || null
 
@@ -1016,6 +1124,11 @@ export default function App() {
     setActiveAlert(alert)
   }, [])
 
+  const openConversation = useCallback((patientId: number) => {
+    setSelectedId(patientId)
+    setView('conversations')
+  }, [])
+
   const handleResolve = useCallback((id: number) => {
     const alert = alerts.find(item => item.id === id)
     if (alert) openCareCase(alert)
@@ -1033,11 +1146,25 @@ export default function App() {
     setAppointments(prev => prev.map(item => item.id === id ? updated : item))
   }, [])
 
-  if (loading) return (
+  if (checkingSession) return (
     <div className="flex items-center justify-center h-screen bg-slate-50">
       <div className="text-center">
         <Heart size={40} className="text-emerald-500 mx-auto mb-3 animate-pulse" />
         <p className="text-slate-500 font-medium">Loading VeloxaCare…</p>
+      </div>
+    </div>
+  )
+
+  if (!session) return <LoginScreen onSignedIn={(next) => {
+    setSession(next)
+    setLoading(true)
+  }} />
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-screen bg-slate-50">
+      <div className="text-center">
+        <Heart size={40} className="text-emerald-500 mx-auto mb-3 animate-pulse" />
+        <p className="text-slate-500 font-medium">Loading clinic workspace…</p>
       </div>
     </div>
   )
@@ -1052,12 +1179,12 @@ export default function App() {
           </div>
           <div>
             <span className="font-bold text-slate-800 text-lg">VeloxaCare</span>
-            <span className="text-xs text-slate-400 ml-2">Accra Family Clinic</span>
+            <span className="hidden 2xl:inline text-xs text-slate-400 ml-2">{clinicName}</span>
           </div>
         </div>
 
         {/* Stats bar */}
-        <div className="hidden md:flex items-center gap-6">
+        <div className="hidden 2xl:flex items-center gap-6">
           <div className="flex items-center gap-2 text-sm">
             <div className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -1090,33 +1217,59 @@ export default function App() {
             </div>
           )}
 
-          {/* Clinic is the product; Demo is the simulator fallback. */}
+          {/* Product pages; Demo remains a simulator fallback only. */}
           <div className="flex rounded-xl border border-slate-200 overflow-hidden text-sm">
             <button onClick={() => setView('clinic')}
+              aria-current={view === 'clinic' ? 'page' : undefined}
               className={`px-3 py-2 font-medium transition ${
                 view === 'clinic' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-              Clinic
+              Overview
+            </button>
+            <button onClick={() => setView('conversations')}
+              aria-current={view === 'conversations' ? 'page' : undefined}
+              className={`px-3 py-2 font-medium transition inline-flex items-center gap-1.5 ${
+                view === 'conversations' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              <MessageCircle size={13} /> Conversations
             </button>
             <button onClick={() => setView('appointments')}
+              aria-current={view === 'appointments' ? 'page' : undefined}
               className={`px-3 py-2 font-medium transition inline-flex items-center gap-1.5 ${
                 view === 'appointments' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
               <CalendarDays size={13} /> Appointments
             </button>
-            <button onClick={() => setView('demo')}
-              title="WhatsApp simulator — same backend path, for demos without the live webhook"
-              className={`px-3 py-2 font-medium transition ${
-                view === 'demo' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-              Demo
-            </button>
+            {session.demo_enabled && (
+              <button onClick={() => setView('demo')}
+                aria-current={view === 'demo' ? 'page' : undefined}
+                title="WhatsApp simulator — same backend path, for demos without the live webhook"
+                className={`px-3 py-2 font-medium transition ${
+                  view === 'demo' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                Demo
+              </button>
+            )}
+            {session.user.role === 'admin' && (
+              <button onClick={() => setView('settings')}
+                aria-current={view === 'settings' ? 'page' : undefined}
+                className={`px-3 py-2 font-medium transition inline-flex items-center gap-1.5 ${
+                  view === 'settings' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                <Settings size={13} /> Settings
+              </button>
+            )}
           </div>
 
           <button onClick={() => setShowReport(true)}
             className="flex items-center gap-2 bg-emerald-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-emerald-700 transition font-medium">
             <FileText size={14} /> Weekly Report
           </button>
-          <button onClick={() => setShowEnroll(true)}
-            className="flex items-center gap-2 bg-slate-800 text-white text-sm px-4 py-2 rounded-xl hover:bg-slate-900 transition font-medium">
-              <Plus size={14} /> Add Patient
+          {session.user.role === 'admin' && (
+            <button onClick={() => setShowEnroll(true)}
+              className="flex items-center gap-2 bg-slate-800 text-white text-sm px-4 py-2 rounded-xl hover:bg-slate-900 transition font-medium">
+                <Plus size={14} /> Add Patient
+            </button>
+          )}
+          <button onClick={async () => { await api.logout(); setSession(null) }}
+            title={`Sign out ${session.user.name}`}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">
+            <LogOut size={14} /><span className="hidden xl:inline">{session.user.name}</span>
           </button>
         </div>
       </header>
@@ -1126,21 +1279,26 @@ export default function App() {
         <ClinicDashboard
           patients={patients}
           alerts={alerts}
+          onOpenPatient={openConversation}
+          onOpenAlert={openCareCase}
+          refreshKey={refreshKey}
+        />
+      ) : view === 'conversations' ? (
+        <PatientConversations
+          patients={patients}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onOpenAlert={openCareCase}
           onActivity={handlePatientUpdate}
           refreshKey={refreshKey}
         />
       ) : view === 'appointments' ? (
         <AppointmentsPanel
           appointments={appointments}
-          onOpenPatient={(patientId) => {
-            setSelectedId(patientId)
-            setView('clinic')
-          }}
+          onOpenPatient={openConversation}
           onUpdate={handleAppointmentStatus}
         />
+      ) : view === 'settings' ? (
+        <AdminSettings currentUserId={session.user.id} />
       ) : (
         /* Demo mode: the WhatsApp simulator. Patients are on real WhatsApp, but
            this runs the identical backend path — keep it as the live fallback if
@@ -1198,12 +1356,11 @@ export default function App() {
 
       {/* Modals */}
       {showEnroll && (
-        <EnrollModal onClose={() => setShowEnroll(false)} onEnrolled={(p) => {
+        <EnrollModal pilotOnly={!session.demo_enabled} onClose={() => setShowEnroll(false)} onEnrolled={(p) => {
           setPatients(prev => prev.some(existing => existing.id === p.id)
             ? prev.map(existing => existing.id === p.id ? p : existing)
             : [...prev, p])
           setSelectedId(p.id)
-          setShowEnroll(false)
         }} />
       )}
       {showReport && <ReportModal onClose={() => setShowReport(false)} />}
@@ -1213,6 +1370,10 @@ export default function App() {
           patient={patients.find(patient => patient.id === activeAlert.patient_id) || null}
           onClose={() => setActiveAlert(null)}
           onResolved={handleCaseResolved}
+          onAcknowledged={() => {
+            loadData()
+            setRefreshKey(key => key + 1)
+          }}
           onMessageSent={() => {
             setRefreshKey(key => key + 1)
             if (activeAlert.patient_id) {

@@ -7,14 +7,16 @@ its numbers describe the real product, so the benchmark must call the exact
 same client code, with the same language mapping and the same request
 parameters, as the agent serving patients.
 
-Four providers, one interface: transcribe(audio_path, language) -> str.
+Five providers, one interface: transcribe(audio_path, language) -> str.
   - SaharaSTT:        Intron Sahara sync endpoint (African-built, code-switch aware)
+  - KhayaSTT:         GhanaNLP Khaya ASR v3 (Ghanaian-built: Twi, Ga, Ewe)
   - OpenAIWhisperSTT: OpenAI's hosted whisper-1 (frontier commercial default)
   - CartesiaSTT:      Cartesia Ink (commercial, latency-optimised)
   - LocalWhisperSTT:  faster-whisper open weights, fully local (zero API dependency)
 
-The challenge requires ≥3 models including one Intron Sahara API; these four
-give one African-built, two commercial and one open-weights/offline.
+Two African-built, two commercial and one open-weights/offline. Khaya only
+serves Ghanaian language pairs — on "en" and "pcm-en" it raises, so a full-run
+results table will show it absent from those slices rather than at zero.
 
 `language` is the benchmark's language_pair value ("en" | "tw-en" | "pcm-en");
 each provider maps it to what its API expects.
@@ -36,10 +38,14 @@ from services.stt import (  # noqa: E402
     CARTESIA_MODEL,
     CARTESIA_STT_URL,
     CARTESIA_VERSION,
+    KHAYA_ASR_BASE,
+    KHAYA_LANG,
     SAHARA_LANG,
     SAHARA_MIN_INTERVAL_S,
     SAHARA_SYNC_URL,
     CartesiaSTT,
+    KhayaSTT,
+    LanguageNotSupported,
     LocalWhisperSTT,
     OpenAIWhisperSTT,
     SaharaEnglishSTT,
@@ -52,10 +58,14 @@ __all__ = [
     "CARTESIA_MODEL",
     "CARTESIA_STT_URL",
     "CARTESIA_VERSION",
+    "KHAYA_ASR_BASE",
+    "KHAYA_LANG",
     "SAHARA_LANG",
     "SAHARA_MIN_INTERVAL_S",
     "SAHARA_SYNC_URL",
     "CartesiaSTT",
+    "KhayaSTT",
+    "LanguageNotSupported",
     "LocalWhisperSTT",
     "OpenAIWhisperSTT",
     "SaharaEnglishSTT",

@@ -14,6 +14,7 @@ type Props = {
   onClose: () => void
   onResolved: (alertId: number) => void
   onMessageSent: (result: DeliveryResult) => void
+  onAcknowledged: () => void
 }
 
 const OUTCOMES: Array<{ value: ResolutionCode; label: string }> = [
@@ -62,7 +63,7 @@ function detailLabel(key: string): string {
 }
 
 export function CareActionPanel({
-  alert, patient, onClose, onResolved, onMessageSent,
+  alert, patient, onClose, onResolved, onMessageSent, onAcknowledged,
 }: Props) {
   const kind = useMemo(() => caseKind(alert), [alert])
   const firstName = (patient?.name || alert.patient_name || 'there').split(' ')[0]
@@ -71,6 +72,8 @@ export function CareActionPanel({
   const [note, setNote] = useState('')
   const [sending, setSending] = useState(false)
   const [resolving, setResolving] = useState(false)
+  const [acknowledging, setAcknowledging] = useState(false)
+  const [acknowledged, setAcknowledged] = useState(Boolean(alert.acknowledged_at))
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
 
   useEffect(() => {
@@ -105,12 +108,26 @@ export function CareActionPanel({
       await api.resolveAlert(alert.id, {
         resolution_code: outcome,
         note,
-        resolved_by: 'Clinic care team',
       })
       onResolved(alert.id)
     } catch (error) {
       setStatus({ tone: 'error', text: error instanceof Error ? error.message : 'Case could not be closed' })
       setResolving(false)
+    }
+  }
+
+  async function acknowledge() {
+    setAcknowledging(true)
+    setStatus(null)
+    try {
+      await api.acknowledgeAlert(alert.id)
+      setAcknowledged(true)
+      onAcknowledged()
+      setStatus({ tone: 'success', text: 'Case assigned to you and acknowledged.' })
+    } catch (error) {
+      setStatus({ tone: 'error', text: error instanceof Error ? error.message : 'Case could not be acknowledged' })
+    } finally {
+      setAcknowledging(false)
     }
   }
 
@@ -130,6 +147,7 @@ export function CareActionPanel({
               <RiskBadge level={alert.risk_level} />
             </div>
             <p className="text-xs text-slate-500 mt-1">Opened {timeAgo(alert.created_at)}</p>
+            {alert.assigned_to_name && <p className="mt-1 text-xs font-medium text-emerald-700">Owned by {alert.assigned_to_name}</p>}
           </div>
           <button onClick={onClose} aria-label="Close care case"
             className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition">
@@ -138,6 +156,13 @@ export function CareActionPanel({
         </div>
 
         <div className="p-5 space-y-4">
+          {!acknowledged && (
+            <button onClick={acknowledge} disabled={acknowledging}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60">
+              {acknowledging ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
+              {acknowledging ? 'Acknowledging…' : 'Acknowledge & assign to me'}
+            </button>
+          )}
           <section className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <ShieldCheck size={15} className="text-emerald-600" />

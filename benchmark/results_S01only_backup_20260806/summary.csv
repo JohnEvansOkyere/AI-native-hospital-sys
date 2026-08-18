@@ -1,0 +1,17 @@
+provider,language_pair,n,mean_wer,bp_accuracy,escalation_accuracy,intent_accuracy,median_latency_ms
+cartesia,ALL,28,0.498,0.9,0.9,0.714,1599
+cartesia,en,5,0.268,1.0,1.0,0.8,2214
+cartesia,pcm-en,10,0.402,0.75,0.75,0.4,1598
+cartesia,tw-en,13,0.66,1.0,1.0,0.923,1599
+local_whisper_base,ALL,28,0.703,0.8,0.9,0.607,769
+local_whisper_base,en,5,0.068,1.0,1.0,1.0,774
+local_whisper_base,pcm-en,10,0.616,0.5,0.75,0.3,803
+local_whisper_base,tw-en,13,1.013,1.0,1.0,0.692,735
+sahara,ALL,28,0.514,0.4,0.4,0.5,6018
+sahara,en,5,0.054,1.0,1.0,1.0,6828
+sahara,pcm-en,10,0.119,0.75,0.75,0.9,6542
+sahara,tw-en,13,0.994,0.0,0.0,0.0,4143
+sahara_en,ALL,28,0.42,0.8,0.8,0.75,7096
+sahara_en,en,5,0.054,1.0,1.0,1.0,6929
+sahara_en,pcm-en,10,0.338,1.0,1.0,0.7,7854
+sahara_en,tw-en,13,0.624,0.6,0.6,0.692,6048
