@@ -51,14 +51,18 @@ Concretely —
   `llama-3.1-8b-instant` for per-message work, `llama-3.3-70b-versatile` for reports.
   Override with `GROQ_FAST_MODEL` / `GROQ_REPORT_MODEL`.
 - **Speech-to-text:** [backend/services/stt.py](backend/services/stt.py) — Intron Sahara,
-  Cartesia Ink, OpenAI `whisper-1`, local faster-whisper.
-- **Text-to-speech:** [backend/services/tts.py](backend/services/tts.py) — Intron TTS,
-  Cartesia Sonic. A voice note in gets a voice note back.
+  GhanaNLP Khaya (Twi/Ga/Ewe), Cartesia Ink, OpenAI `whisper-1`, local faster-whisper.
+- **Text-to-speech:** [backend/services/tts.py](backend/services/tts.py) — GhanaNLP Khaya
+  (real Twi/Ewe voices), Intron TTS, Cartesia Sonic. A voice note in gets a voice note back.
+- **Translation:** [backend/services/translate.py](backend/services/translate.py) — GhanaNLP
+  Khaya MT (eng↔twi/gaa/ewe). Used by the reply path so a Twi voice speaks Twi words;
+  the English reply stays the stored record, `messages.spoken_body` records what was said.
 - **Frontend:** React + Vite + TypeScript + Tailwind, in [frontend/](frontend/)
 - **Realtime:** native WebSockets (`/ws/{patient_id}` and `/ws/-1` global), so the
   dashboard and the WhatsApp chat update live as messages flow.
-- **Storage:** SQLite locally; **Turso (libSQL)** when `TURSO_DATABASE_URL` is set.
-  Same SQL either way — see `db.connect()`.
+- **Storage:** SQLite locally; **Supabase PostgreSQL** when `DATABASE_URL` is set.
+  Turso remains a legacy compatibility path only. All access still goes through
+  `db.connect()` and PostgreSQL schema changes live in `backend/migrations/`.
 - **Deployment:** one Vercel project, two services (see [vercel.json](vercel.json)
   and [docs/DEPLOY.md](docs/DEPLOY.md)).
 
@@ -68,7 +72,7 @@ Concretely —
 vercel.json          Two-service deployment: routes /api, /webhook, /ws → backend
 backend/             FastAPI service
   main.py              App, all routes, WebSocket manager
-  db.py                Schema + seed data, and the SQLite/Turso connection layer
+  db.py                Schema + seed data, and the SQLite/PostgreSQL connection layer
   requirements.txt        Deployed deps — no faster-whisper (too large for serverless)
   requirements-local.txt  The above plus faster-whisper, for local runs + benchmark
   services/
@@ -95,11 +99,10 @@ cp .env.example .env      # add GROQ_API_KEY (optional — see below)
 ```
 
 To deploy, see [docs/DEPLOY.md](docs/DEPLOY.md). One Vercel project builds both
-services; the only variable that changes behaviour rather than degrading is
-`TURSO_DATABASE_URL`, without which a deployed instance loses all state on every
-cold start.
+services. Production requires a Supabase PostgreSQL `DATABASE_URL`; without a
+durable database a serverless instance loses all state on cold start.
 
-The system **works with or without API keys.** Without them, `ai.py` falls back to
+The system **works with or without AI and voice API keys.** Without them, `ai.py` falls back to
 rule-based keyword reason-detection and a templated weekly report, and `stt.py` falls
 back to local faster-whisper (open weights, no key, fully offline). Always keep this
 graceful-degradation property — the demo must never hard-fail on a missing key or no
@@ -140,17 +143,17 @@ These are the things that would force a rewrite if broken.
   and module-level side effects run on every cold start. Never write files at
   import time, never cache state in a module global and expect another request to
   see it, and never make the demo depend on a file written by an earlier request.
-- **All database access goes through `db.connect()`**, never `aiosqlite` directly.
-  That one function is what lets the same SQL run against a local file and against
-  Turso in production.
+- **All database access goes through `db.connect()`**, never `aiosqlite` or
+  `asyncpg` directly. That boundary keeps SQLite local development and Supabase
+  PostgreSQL production behind one application interface.
 
 ## Key conventions & gotchas
 
-- **The DB seeds itself once.** `init_db()` only seeds if the `patients` table is
-  empty. To reset the demo, delete `backend/veloxacare.db` and restart (deployed:
-  drop the tables via `turso db shell`). Schema changes need an additive
-  `ALTER TABLE` migration guarded by `PRAGMA table_info` — follow the existing
-  pattern in `db.py` so live demo databases keep working.
+- **The local SQLite DB seeds itself once.** `init_db()` only seeds if the
+  `patients` table is empty. To reset the demo, delete `backend/veloxacare.db`
+  and restart. SQLite compatibility changes use guarded additive `ALTER TABLE`
+  logic in `db.py`; production PostgreSQL changes are versioned SQL files under
+  `backend/migrations/` and never seed demo records.
 - **Seed data is date-relative.** `db.py` computes adherence logs and messages
   relative to `date.today()`, so the demo always looks "current" no matter when it
   runs. Preserve this when editing seed data.
@@ -173,9 +176,13 @@ These are the things that would force a rewrite if broken.
   reply throws away the accessibility the voice channel just bought. A typed
   message getting no audio is the design, not a broken key.
 - **Intron TTS has no Twi, Akan or Ga voice** — only Pidgin, plus ten non-Ghanaian
-  English accents. Note the asymmetry with STT, where Sahara *does* have tw/ak/gaa:
-  recognition of Ghanaian languages is ahead of synthesis of them. Say that plainly
-  rather than implying a Twi voice exists.
+  English accents. **GhanaNLP Khaya is what closes that gap**: it has real Twi and
+  Ewe voices (not Ga), reached via the translate-then-speak path in `main.py`
+  (`speak_reply`). Never point a Twi/Ewe voice at English text — the reply is
+  translated first, and `spoken_body` records the words actually said. Ga remains
+  voiceless; say that plainly rather than implying full coverage, and treat every
+  Khaya capability as unverified until `benchmark/probe_khaya.py` has measured it
+  on the deployment's key (documented ≠ shipped — Sahara taught us that).
 - **The WhatsApp pane is a simulator** that shares the exact same backend code path as
   real WhatsApp would. The Meta Cloud API adapter is the planned swap-in (see
   ARCHITECTURE.md) — keep `bot.process_message()` transport-agnostic so the same logic

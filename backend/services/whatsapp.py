@@ -26,6 +26,8 @@ from pathlib import Path
 
 import httpx
 
+from config import production_like
+
 logger = logging.getLogger(__name__)
 
 GRAPH_API = os.getenv("META_GRAPH_API", "https://graph.facebook.com/v19.0")
@@ -84,7 +86,7 @@ def verify_signature(raw_body: bytes, supplied: str | None) -> bool:
     """
     secret = os.getenv("META_APP_SECRET")
     if not secret:
-        return True
+        return not production_like()
     expected = "sha256=" + hmac.new(
         secret.encode("utf-8"), raw_body, hashlib.sha256
     ).hexdigest()

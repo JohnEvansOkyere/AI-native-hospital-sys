@@ -4,15 +4,24 @@ import httpx
 import json
 import os
 import re
+from pathlib import Path
 from datetime import datetime, timedelta, date
 from typing import Union
 import random
 
+from config import demo_seed_enabled
+
 # Local dev writes a file next to the app. On a serverless host the bundle is
 # read-only, so fall back to the one writable location — but see connect():
 # /tmp is per-instance and wiped on cold start, so it is a demo path only.
-# Anything resembling a real deployment sets TURSO_DATABASE_URL.
+# Production uses Supabase PostgreSQL through DATABASE_URL. Turso remains a
+# compatibility path for existing demo deployments while they are migrated.
 DB_PATH = os.getenv("DB_PATH") or ("/tmp/veloxacare.db" if os.getenv("VERCEL") else "veloxacare.db")
+MIGRATIONS_DIR = Path(__file__).with_name("migrations")
+
+
+def postgres_configured() -> bool:
+    return bool(os.getenv("DATABASE_URL", "").strip())
 
 
 def turso_configured() -> bool:
@@ -23,10 +32,12 @@ def connect():
     """Open a database connection.
 
     Returns an async context manager exposing the aiosqlite surface this app
-    uses (execute / fetchone / fetchall / lastrowid / commit), backed either by
-    a local SQLite file or by Turso over HTTP. Every call site uses this rather
-    than aiosqlite directly, so the storage swap stays in one place.
+    uses (execute / fetchone / fetchall / commit), backed by Supabase
+    PostgreSQL in production, Turso for legacy deployments, or local SQLite.
+    Every call site uses this rather than a database client directly.
     """
+    if postgres_configured():
+        return _PostgresConnection()
     if turso_configured():
         return _TursoConnection()
     return aiosqlite.connect(DB_PATH)
@@ -34,7 +45,162 @@ def connect():
 
 # Both backends satisfy the same small interface, so anything that receives an
 # open connection is annotated with this rather than with a concrete class.
-Connection = Union[aiosqlite.Connection, "_TursoConnection"]
+Connection = Union[aiosqlite.Connection, "_TursoConnection", "_PostgresConnection"]
+
+
+def database_backend() -> str:
+    if postgres_configured():
+        return "postgres"
+    if turso_configured():
+        return "turso"
+    return "sqlite"
+
+
+def _postgres_placeholders(sql: str) -> str:
+    """Convert the app's qmark parameters to asyncpg's numbered parameters.
+
+    Question marks inside quoted SQL strings and comments are preserved. This
+    lets call sites keep one parameter style without translating SQL dialects.
+    """
+    result: list[str] = []
+    index = 1
+    quote = None
+    i = 0
+    while i < len(sql):
+        char = sql[i]
+        next_char = sql[i + 1] if i + 1 < len(sql) else ""
+        if quote:
+            result.append(char)
+            if char == quote:
+                if next_char == quote:
+                    result.append(next_char)
+                    i += 1
+                else:
+                    quote = None
+        elif char in {"'", '"'}:
+            quote = char
+            result.append(char)
+        elif char == "-" and next_char == "-":
+            end = sql.find("\n", i)
+            if end == -1:
+                result.append(sql[i:])
+                break
+            result.append(sql[i:end + 1])
+            i = end
+        elif char == "?":
+            result.append(f"${index}")
+            index += 1
+        else:
+            result.append(char)
+        i += 1
+    return "".join(result)
+
+
+def _postgres_url() -> str:
+    url = os.getenv("DATABASE_URL", "").strip()
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if not url.startswith("postgresql://"):
+        raise RuntimeError(
+            "DATABASE_URL must be a PostgreSQL connection string from the "
+            "Supabase Connect panel, not the project API URL"
+        )
+    return url
+
+
+def _postgres_connect_timeout() -> float:
+    try:
+        return max(5.0, min(float(os.getenv("DB_CONNECT_TIMEOUT_S", "30")), 60.0))
+    except ValueError:
+        return 30.0
+
+
+class _PostgresCursor:
+    def __init__(self, rows=(), columns=(), rowcount=-1):
+        self._rows = list(rows)
+        self.rowcount = rowcount
+        self.lastrowid = None
+        self.description = [
+            (name, None, None, None, None, None, None) for name in columns
+        ]
+
+    async def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    async def fetchall(self):
+        return self._rows
+
+
+class _PostgresConnection:
+    """Small asyncpg adapter matching the database surface used by the app."""
+
+    def __init__(self):
+        self._conn = None
+        self._transaction = None
+
+    async def __aenter__(self):
+        try:
+            import asyncpg
+        except ImportError as exc:
+            raise RuntimeError(
+                "PostgreSQL is configured but asyncpg is not installed"
+            ) from exc
+        # Supabase's poolers do not support asyncpg's connection-level prepared
+        # statement cache reliably. Queries are still parameterized.
+        self._conn = await asyncpg.connect(
+            dsn=_postgres_url(), statement_cache_size=0, command_timeout=30,
+            timeout=_postgres_connect_timeout(),
+        )
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        if self._transaction is not None:
+            await self._transaction.rollback()
+            self._transaction = None
+        if self._conn is not None:
+            await self._conn.close()
+        return False
+
+    async def _begin(self):
+        if self._transaction is None:
+            self._transaction = self._conn.transaction()
+            await self._transaction.start()
+
+    async def execute(self, sql: str, params=()):
+        await self._begin()
+        statement = _postgres_placeholders(sql)
+        leading = statement.lstrip().upper()
+        returns_rows = leading.startswith(("SELECT", "WITH", "SHOW")) or " RETURNING " in leading
+        if returns_rows:
+            records = await self._conn.fetch(statement, *params)
+            columns = list(records[0].keys()) if records else []
+            return _PostgresCursor(
+                [tuple(record.values()) for record in records], columns, len(records),
+            )
+        status = await self._conn.execute(statement, *params)
+        match = re.search(r" (\d+)$", status)
+        return _PostgresCursor(rowcount=int(match.group(1)) if match else -1)
+
+    async def executescript(self, script: str):
+        for statement in split_sql(script):
+            await self.execute(statement)
+
+    async def commit(self):
+        if self._transaction is not None:
+            await self._transaction.commit()
+            self._transaction = None
+
+
+async def insert_returning_id(db: Connection, sql: str, params=()) -> int:
+    """Insert one identity-backed row and return its id on every backend."""
+    if database_backend() == "postgres":
+        cursor = await db.execute(f"{sql.rstrip().rstrip(';')} RETURNING id", params)
+        row = await cursor.fetchone()
+        if not row:
+            raise RuntimeError("PostgreSQL insert did not return an id")
+        return int(row[0])
+    cursor = await db.execute(sql, params)
+    return int(cursor.lastrowid)
 
 
 def turso_http_url(url: str) -> str:
@@ -96,9 +262,10 @@ def _from_value(value):
 class _TursoCursor:
     """Mimics the slice of aiosqlite.Cursor this codebase touches."""
 
-    def __init__(self, rows, lastrowid, columns=None):
+    def __init__(self, rows, lastrowid, columns=None, rowcount=-1):
         self._rows = rows
         self.lastrowid = lastrowid
+        self.rowcount = rowcount
         # aiosqlite exposes DB-API cursor.description. get_patient_full() uses
         # it to turn SELECT * into a named record, so the Turso adapter must do
         # the same rather than returning an anonymous tuple list.
@@ -178,6 +345,7 @@ class _TursoConnection:
             rows,
             int(rowid) if rowid is not None else None,
             result.get("cols", []),
+            int(result.get("affected_row_count", -1)),
         )
 
     async def executescript(self, script: str):
@@ -207,7 +375,13 @@ CREATE TABLE IF NOT EXISTS patients (
     enrolled_at TEXT NOT NULL,
     doctor_name TEXT DEFAULT 'Dr. Mensah',
     status TEXT DEFAULT 'active',
-    risk_level TEXT DEFAULT 'green'
+    risk_level TEXT DEFAULT 'green',
+    preferred_language TEXT NOT NULL DEFAULT 'en',
+    consent_status TEXT NOT NULL DEFAULT 'pending',
+    consent_recorded_at TEXT,
+    consent_recorded_by TEXT DEFAULT '',
+    communication_opt_in INTEGER NOT NULL DEFAULT 0,
+    paused INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -231,6 +405,11 @@ CREATE TABLE IF NOT EXISTS messages (
     tts_provider TEXT DEFAULT '',
     tts_voice TEXT DEFAULT '',
     tts_latency_ms INTEGER DEFAULT 0,
+    -- When the spoken reply was translated into the patient's language, the
+    -- exact words the voice said. Empty when the audio speaks body verbatim.
+    -- body stays English — the durable clinical record — and this keeps the
+    -- record honest about what the patient actually heard.
+    spoken_body TEXT DEFAULT '',
     -- Outbound WhatsApp audit. 'accepted' means Meta accepted the API call;
     -- sent/delivered/read/failed arrive later through webhook status events.
     delivery_status TEXT DEFAULT '',
@@ -273,8 +452,98 @@ CREATE TABLE IF NOT EXISTS escalations (
     resolution_note TEXT DEFAULT '',
     resolved_by TEXT DEFAULT '',
     resolved_at TEXT,
+    assigned_to INTEGER REFERENCES staff_users(id),
+    acknowledged_at TEXT,
+    acknowledged_by INTEGER REFERENCES staff_users(id),
+    due_at TEXT,
+    notification_status TEXT DEFAULT '',
+    notification_error TEXT DEFAULT '',
+    notification_message_id TEXT DEFAULT '',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS staff_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin', 'care_team')),
+    password_hash TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    failed_login_count INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    last_login_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS staff_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES staff_users(id),
+    csrf_token TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    user_agent TEXT DEFAULT '',
+    ip_address TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_staff_sessions_expiry ON staff_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS inbound_events (
+    external_message_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'processing',
+    received_at TEXT NOT NULL,
+    processed_at TEXT,
+    error TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS reminder_dispatches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id INTEGER NOT NULL REFERENCES patients(id),
+    reminder_kind TEXT NOT NULL,
+    dispatch_date TEXT NOT NULL,
+    scheduled_for TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT DEFAULT '',
+    external_message_id TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(patient_id, reminder_kind, dispatch_date)
+);
+
+CREATE TABLE IF NOT EXISTS consent_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id INTEGER NOT NULL REFERENCES patients(id),
+    consent_status TEXT NOT NULL,
+    method TEXT NOT NULL,
+    recorded_by TEXT NOT NULL,
+    note TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_consent_events_patient ON consent_events(patient_id, created_at);
+
+CREATE TABLE IF NOT EXISTS clinic_settings (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    clinic_name TEXT NOT NULL DEFAULT 'VeloxaCare Clinic',
+    timezone TEXT NOT NULL DEFAULT 'Africa/Accra',
+    escalation_phone TEXT DEFAULT '',
+    updated_at TEXT NOT NULL,
+    updated_by INTEGER REFERENCES staff_users(id)
+);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staff_user_id INTEGER REFERENCES staff_users(id),
+    staff_name TEXT NOT NULL,
+    action TEXT NOT NULL,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at);
 
 CREATE TABLE IF NOT EXISTS care_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -403,13 +672,13 @@ SEED_MESSAGES = {
         (-13, "outbound", "✅ Logged! Keep it up, Kofi.", None),
         (-11, "outbound", "Good morning Kofi! ☀️ Time for your Lisinopril 10mg.", None),
         (-11, "inbound", "I haven't been able to buy it. The pharmacy said it's out of stock and the other one is too expensive.", "cost"),
-        (-11, "outbound", "I understand, Kofi. 🏥 I've flagged this for your nurse immediately — they will call you today about an NHIS-covered alternative that works just as well. Please don't stop your treatment.", None),
+        (-11, "outbound", "I understand, Kofi. 🏥 I've marked this for your care team to review an NHIS-covered option. Please keep your phone close.", None),
         (-8, "outbound", "Good morning Kofi! ☀️ Time for your Lisinopril 10mg.", None),
         (-8, "inbound", "Still can't afford it this week", "cost"),
-        (-8, "outbound", "Cost barrier flagged again, Kofi. 🚨 Your nurse has been alerted. We are working on a solution for you. Please hang in there — your health matters.", None),
+        (-8, "outbound", "Cost barrier marked again, Kofi. 🚨 Your care team can now see this as an urgent case. Please keep your phone close.", None),
         (-5, "outbound", "Good morning Kofi! ☀️ Time for your Lisinopril 10mg.", None),
         (-5, "inbound", "No", "cost"),
-        (-5, "outbound", "⚠️ Kofi, missing your medication is putting your heart at risk. I've escalated this to Dr. Ama Boateng. Someone will reach out to you today.", None),
+        (-5, "outbound", "⚠️ Kofi, I've marked this urgent for your care team. Please keep your phone close so the clinic can follow up.", None),
         (-2, "outbound", "Good morning Kofi! ☀️ Time for your Lisinopril 10mg.", None),
         (-2, "inbound", "No still no money", "cost"),
         (-2, "outbound", "Flagged to your care team. 🏥 Please visit the clinic if you feel dizzy or have a headache.", None),
@@ -437,7 +706,7 @@ SEED_MESSAGES = {
         (-13, "outbound", "✅ Excellent consistency, Kwame!", None),
         (-7, "outbound", "Weekly check-in, Kwame. 📋 What was your blood pressure this week?", None),
         (-7, "inbound", "It was high. 168/102", None),
-        (-7, "outbound", "⚠️ 168/102 is significantly above your target. I'm alerting Dr. Kwesi Asante now. 🚨 Please avoid salty food, rest, and come to the clinic if you have a headache or chest tightness.", None),
+        (-7, "outbound", "⚠️ 168/102 is significantly above your target. I've marked this urgent for your care team. If you have chest pain, severe headache or difficulty breathing, seek urgent medical help now.", None),
         (-5, "outbound", "Good morning Kwame! ☀️ Time for your Lisinopril 5mg.", None),
         (-5, "inbound", "Yes done", None),
         (-5, "outbound", "✅ Good. Dr. Kwesi will want to see you this week because of that reading. Please book an appointment.", None),
@@ -490,7 +759,7 @@ SEED_ESCALATIONS = [
             "missed_days": 9,
             "reason": "cost",
             "last_message": "No still no money",
-            "action": "Nurse and doctor alerted. NHIS-covered alternative to be arranged."
+            "action": "Urgent care-team case created. NHIS-covered alternative to be reviewed."
         }),
         "days_ago": 2,
         "resolved": 0,
@@ -502,7 +771,7 @@ SEED_ESCALATIONS = [
         "details": json.dumps({
             "reading": "168/102",
             "target": "below 140/90",
-            "action": "Doctor alerted. Urgent appointment recommended.",
+            "action": "Urgent care-team case created. Clinician review recommended.",
             "last_message": "It was high. 168/102"
         }),
         "days_ago": 7,
@@ -528,8 +797,45 @@ async def get_db():
     return await connect()
 
 
+async def _run_postgres_migrations(db: Connection) -> None:
+    """Apply checked-in PostgreSQL migrations once, under an advisory lock."""
+    await db.execute(
+        """CREATE TABLE IF NOT EXISTS schema_migrations (
+               version TEXT PRIMARY KEY,
+               applied_at TEXT NOT NULL
+           )"""
+    )
+    await db.commit()
+    # Serializes cold starts that race to initialize a new Supabase project.
+    await db.execute("SELECT pg_advisory_xact_lock(862094221)")
+    applied = {
+        row[0] for row in await (
+            await db.execute("SELECT version FROM schema_migrations")
+        ).fetchall()
+    }
+    for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        if migration.name in applied:
+            continue
+        await db.executescript(migration.read_text(encoding="utf-8"))
+        await db.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+            (migration.name, datetime.now().isoformat()),
+        )
+    await db.commit()
+
+
 async def init_db():
     async with connect() as db:
+        if database_backend() == "postgres":
+            await _run_postgres_migrations(db)
+            await db.execute(
+                """INSERT INTO clinic_settings (id, clinic_name, timezone, updated_at)
+                   VALUES (1, 'VeloxaCare Clinic', 'Africa/Accra', ?)
+                   ON CONFLICT(id) DO NOTHING""",
+                (datetime.now().isoformat(),),
+            )
+            await db.commit()
+            return
         await db.executescript(SCHEMA)
 
         # Keep existing demo databases usable when the category-aware schema is
@@ -543,11 +849,28 @@ async def init_db():
             "care_instructions": "TEXT DEFAULT ''",
             "next_follow_up": "TEXT DEFAULT ''",
             "recall_date": "TEXT DEFAULT ''",
+            "preferred_language": "TEXT NOT NULL DEFAULT 'en'",
+            "consent_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "consent_recorded_at": "TEXT",
+            "consent_recorded_by": "TEXT DEFAULT ''",
+            "communication_opt_in": "INTEGER NOT NULL DEFAULT 0",
+            "paused": "INTEGER NOT NULL DEFAULT 0",
         }
         for column, definition in new_columns.items():
             if column not in existing_columns:
                 await db.execute(f"ALTER TABLE patients ADD COLUMN {column} {definition}")
         await db.execute("UPDATE patients SET category='chronic' WHERE category IS NULL OR category='' ")
+        if demo_seed_enabled():
+            # Existing local demo databases predate consent fields. Keep their
+            # synthetic patients interactive; production mode never performs
+            # this backfill and safely leaves legacy real records pending.
+            await db.execute(
+                """UPDATE patients SET consent_status='granted', communication_opt_in=1,
+                          consent_recorded_at=COALESCE(consent_recorded_at, ?),
+                          consent_recorded_by=CASE WHEN consent_recorded_by='' THEN 'Demo migration' ELSE consent_recorded_by END
+                   WHERE consent_status='pending'""",
+                (datetime.now().isoformat(),),
+            )
 
         # Same treatment for voice-note columns on messages, so a demo DB
         # created before the voice pipeline keeps working.
@@ -563,6 +886,7 @@ async def init_db():
             "tts_provider": "TEXT DEFAULT ''",
             "tts_voice": "TEXT DEFAULT ''",
             "tts_latency_ms": "INTEGER DEFAULT 0",
+            "spoken_body": "TEXT DEFAULT ''",
             "delivery_status": "TEXT DEFAULT ''",
             "delivery_error": "TEXT DEFAULT ''",
             "external_message_id": "TEXT DEFAULT ''",
@@ -582,15 +906,36 @@ async def init_db():
             "resolution_note": "TEXT DEFAULT ''",
             "resolved_by": "TEXT DEFAULT ''",
             "resolved_at": "TEXT",
+            "assigned_to": "INTEGER REFERENCES staff_users(id)",
+            "acknowledged_at": "TEXT",
+            "acknowledged_by": "INTEGER REFERENCES staff_users(id)",
+            "due_at": "TEXT",
+            "notification_status": "TEXT DEFAULT ''",
+            "notification_error": "TEXT DEFAULT ''",
+            "notification_message_id": "TEXT DEFAULT ''",
         }
         for column, definition in new_escalation_columns.items():
             if column not in existing_escalation_columns:
                 await db.execute(f"ALTER TABLE escalations ADD COLUMN {column} {definition}")
+        await db.execute(
+            """UPDATE escalations
+               SET due_at=strftime('%Y-%m-%dT%H:%M:%S', created_at,
+                   CASE WHEN risk_level='red' THEN '+4 hours' ELSE '+24 hours' END)
+               WHERE resolved=0 AND (due_at IS NULL OR due_at='')"""
+        )
+        await db.commit()
+
+        await db.execute(
+            """INSERT INTO clinic_settings (id, clinic_name, timezone, updated_at)
+               VALUES (1, 'VeloxaCare Clinic', 'Africa/Accra', ?)
+               ON CONFLICT(id) DO NOTHING""",
+            (datetime.now().isoformat(),),
+        )
         await db.commit()
 
         cursor = await db.execute("SELECT COUNT(*) FROM patients")
         row = await cursor.fetchone()
-        if row[0] > 0:
+        if row[0] > 0 or not demo_seed_enabled():
             return
 
         today = date.today()
@@ -602,12 +947,14 @@ async def init_db():
             await db.execute(
                 """INSERT INTO patients (name, phone, age, condition, drug_name, drug_dosage,
                    category, service_type, care_instructions, next_follow_up, recall_date,
-                   enrolled_at, doctor_name, risk_level) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   enrolled_at, doctor_name, risk_level, consent_status,
+                   consent_recorded_at, consent_recorded_by, communication_opt_in)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'granted',?,'Demo seed',1)""",
                 (p["name"], p["phone"], p["age"], p["condition"],
                  p["drug_name"], p["drug_dosage"], p.get("category", "chronic"),
                  p.get("service_type", "Hypertension follow-up"), p.get("care_instructions", ""),
                  p.get("next_follow_up", ""), p.get("recall_date", ""), enrolled.isoformat(),
-                 p["doctor_name"], p["risk_level"]),
+                 p["doctor_name"], p["risk_level"], datetime.now().isoformat()),
             )
 
         await db.commit()
@@ -651,7 +998,8 @@ async def init_db():
 
         for pid in phone_to_id.values():
             await db.execute(
-                "INSERT OR IGNORE INTO conversation_state (patient_id, current_flow, context) VALUES (?, 'idle', '{}')",
+                """INSERT INTO conversation_state (patient_id, current_flow, context)
+                   VALUES (?, 'idle', '{}') ON CONFLICT(patient_id) DO NOTHING""",
                 (pid,),
             )
 

@@ -45,7 +45,7 @@ async def generate_care_assistant_reply(facts: dict, message: str) -> str:
                         "content": (
                             "You are a warm WhatsApp care assistant. Answer the patient's question using only the supplied context. "
                             "Do not diagnose, prescribe, or invent an appointment or reminder. "
-                            "For urgent symptoms, tell the patient the care team has been alerted. "
+                            "For urgent symptoms, tell the patient the case is marked urgent for the care team. "
                             "If the system says automatic scheduling is inactive, say that clearly. "
                             "Keep the reply to 2-4 short sentences in simple English."
                         ),
@@ -148,7 +148,7 @@ def assess_dental_concern(message: str) -> tuple[str | None, str | None]:
     if any(pattern in t for pattern in DENTAL_URGENT_PATTERNS) or (
         "pain" in t and "swelling" in t
     ):
-        return "red", "⚠️ I’ve alerted your dental care team about your symptoms. Please wait for their call, and seek urgent care if your breathing or swallowing is affected."
+        return "red", "⚠️ I’ve marked this urgent for your dental care team. Please keep your phone close, and seek urgent care if your breathing or swallowing is affected."
     if any(pattern in t for pattern in DENTAL_CONCERN_PATTERNS):
         return "amber", "Thanks for telling us. I’ve flagged this for your dental care team so they can review your recovery and contact you."
     return None, None
@@ -163,7 +163,7 @@ EYE_CONCERN_PATTERNS = [
 def assess_eye_concern(message: str) -> tuple[str | None, str | None]:
     t = message.lower()
     if any(pattern in t for pattern in ("sudden blindness", "blurred vision", "can't see", "cant see", "severe eye pain")):
-        return "red", "⚠️ I’ve alerted the eye-care team about your symptoms. Please seek urgent care if your vision is suddenly affected."
+        return "red", "⚠️ I’ve marked this urgent for the eye-care team. Please seek urgent care if your vision is suddenly affected."
     if any(pattern in t for pattern in EYE_CONCERN_PATTERNS):
         return "amber", "Thanks for telling us. I’ve flagged this for the eye-care team so they can review your recovery and contact you."
     return None, None
@@ -231,7 +231,7 @@ def wants_to_report_bp(message: str) -> bool:
 
 def assess_bp_risk(systolic: int, diastolic: int) -> tuple[str, str]:
     if systolic >= 160 or diastolic >= 100:
-        return "red", f"⚠️ {systolic}/{diastolic} is dangerously high. Please rest and go to the clinic today if you have a headache or chest tightness. Your doctor has been alerted."
+        return "red", f"⚠️ {systolic}/{diastolic} is dangerously high. Please rest and go to the clinic today if you have a headache or chest tightness. I’ve marked this urgent for your care team."
     elif systolic >= 140 or diastolic >= 90:
         return "amber", f"⚠️ {systolic}/{diastolic} is above your target (below 140/90). I've noted this for your doctor. Try to reduce salt and stay consistent with your medication."
     else:
@@ -272,15 +272,15 @@ BOT_RESPONSES = {
         "✅ Logged! That's {streak} days in a row — outstanding, {name}!",
     ],
     "cost": (
-        "I understand, {name}. 🏥 I've flagged this to your nurse right away — "
-        "they will reach out about an NHIS-covered alternative. Please don't stop treatment."
+        "I understand, {name}. 🏥 I've marked this for your care team to review an "
+        "NHIS-covered alternative. Please keep your phone close."
     ),
     "forgot": (
         "No worries! Take it now if it's been less than 6 hours, {name}. "
         "Try leaving your medication next to your morning tea so it becomes automatic. See you tomorrow! 😊"
     ),
     "side_effect": (
-        "That's important to tell us, {name}. I've alerted your nurse to review this. "
+        "That's important to tell us, {name}. I've marked this for your nurse to review. "
         "Please don't stop your medication without speaking to your doctor first. 🏥"
     ),
     "ran_out": (

@@ -1,27 +1,33 @@
 import os
 import json
 import logging
+import secrets
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional
+from zoneinfo import ZoneInfo
 
-import db as db_store
 from dotenv import load_dotenv
 from fastapi import (FastAPI, WebSocket, WebSocketDisconnect, HTTPException,
                      UploadFile, File, Form, Query, Request)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
-from db import init_db, get_db, DB_PATH, Connection
-from services.bot import process_message, trigger_care_reminder, trigger_checkin
-from services.ai import generate_weekly_report, display_first_name
-from services import appointments, stt, tts, whatsapp
+# One canonical local environment file at the repository root. Hosted
+# deployments continue to use their injected process environment.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-load_dotenv()
+import db as db_store  # noqa: E402
+from db import init_db, get_db, DB_PATH, Connection, insert_returning_id  # noqa: E402
+from config import (cors_origins, demo_tools_enabled, environment,  # noqa: E402
+                    missing_production_config, production_like)
+from services.bot import process_message, trigger_care_reminder, trigger_checkin  # noqa: E402
+from services.ai import generate_weekly_report, display_first_name  # noqa: E402
+from services import appointments, auth, stt, translate, tts, whatsapp  # noqa: E402
 
 # Serverless bundles are read-only apart from /tmp, and creating this at import
 # time would take the whole app down on boot. Resolve the location eagerly but
@@ -94,33 +100,322 @@ async def lifespan(app: FastAPI):
     global DB_ERROR
     try:
         await init_db()
+        async with db_store.connect() as db:
+            await auth.ensure_bootstrap_admin(db)
         DB_ERROR = None
     except Exception as e:
         DB_ERROR = f"{type(e).__name__}: {e}"
         logging.getLogger(__name__).error(
             "Database init failed — service is up but has no data. "
-            "Check TURSO_DATABASE_URL / TURSO_AUTH_TOKEN. %s", DB_ERROR
+            "Check DATABASE_URL and the applied PostgreSQL migrations. %s", DB_ERROR
         )
     yield
 
 
-app = FastAPI(title="VeloxaCare API", lifespan=lifespan)
+app = FastAPI(
+    title="VeloxaCare API", lifespan=lifespan,
+    docs_url=None if production_like() else "/docs",
+    redoc_url=None if production_like() else "/redoc",
+    openapi_url=None if production_like() else "/openapi.json",
+)
 
+allowed_origins = cors_origins()
+if not allowed_origins and not production_like():
+    allowed_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+PUBLIC_API_PATHS = {"/api/auth/login", "/api/cron/hourly"}
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+SETUP_WRITE_PATHS = {"/api/auth/logout", "/api/settings/clinic", "/api/patients"}
+
+
+def setup_write_allowed(path: str) -> bool:
+    return path in SETUP_WRITE_PATHS or path == "/api/staff" or path.startswith("/api/staff/")
+
+
+@app.middleware("http")
+async def staff_security(request: Request, call_next):
+    """Enforce authentication and CSRF at the server boundary."""
+    path = request.url.path
+    if not path.startswith("/api/") or path in PUBLIC_API_PATHS:
+        return await call_next(request)
+    missing_config = missing_production_config()
+    if DB_ERROR:
+        return JSONResponse({"detail": "Database unavailable", "error": DB_ERROR}, status_code=503)
+    # The durable production database is non-negotiable. Other provider setup
+    # can be completed from an authenticated workspace: health stays degraded
+    # and messaging/clinical actions remain blocked, while admins may configure
+    # the clinic and save consent-pending patient records without contacting them.
+    if "DATABASE_URL" in missing_config:
+        return JSONResponse(
+            {"detail": "Production configuration incomplete", "missing": missing_config},
+            status_code=503,
+        )
+    try:
+        async with db_store.connect() as db:
+            session = await auth.get_session(db, request.cookies.get(auth.COOKIE_NAME, ""))
+    except Exception as exc:
+        return JSONResponse({"detail": "Authentication store unavailable", "error": str(exc)}, status_code=503)
+    if not session:
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    if request.method not in SAFE_METHODS:
+        supplied = request.headers.get("x-csrf-token", "")
+        if not supplied or not secrets.compare_digest(supplied, session["csrf_token"]):
+            return JSONResponse({"detail": "Invalid CSRF token"}, status_code=403)
+    if missing_config and request.method not in SAFE_METHODS and not setup_write_allowed(path):
+        return JSONResponse(
+            {"detail": "Production integrations incomplete; clinical writes are disabled",
+             "missing": missing_config},
+            status_code=503,
+        )
+    request.state.staff = session
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self)"
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    if production_like():
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def require_admin(request: Request) -> dict:
+    staff = request.state.staff
+    if staff["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Administrator access required")
+    return staff
+
+
+async def record_audit(
+    db: Connection, staff: dict, action: str, subject_type: str,
+    subject_id: int | str, details: dict | None = None,
+) -> None:
+    await db.execute(
+        """INSERT INTO audit_events
+           (staff_user_id, staff_name, action, subject_type, subject_id, details, created_at)
+           VALUES (?,?,?,?,?,?,?)""",
+        (staff["id"], staff["name"], action, subject_type, str(subject_id),
+         json.dumps(details or {}), datetime.now().isoformat()),
+    )
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class StaffCreateRequest(BaseModel):
+    email: str
+    name: str
+    role: Literal["admin", "care_team"] = "care_team"
+    password: str
+
+
+class ClinicSettingsRequest(BaseModel):
+    clinic_name: str
+    timezone: str = "Africa/Accra"
+    escalation_phone: str = ""
+
+
+class StaffStatusRequest(BaseModel):
+    active: bool
+
+
+class StaffPasswordRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/auth/login")
+async def login(body: LoginRequest, request: Request, response: Response):
+    if DB_ERROR:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    async with db_store.connect() as db:
+        user = await auth.authenticate(db, body.email, body.password)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid credentials or account temporarily locked")
+        session = await auth.create_session(
+            db, user["id"], request.headers.get("user-agent", ""),
+            request.client.host if request.client else "",
+        )
+    response.set_cookie(
+        value=session["token"],
+        **auth.cookie_options(request.url.scheme, request.url.hostname or ""),
+    )
+    return {
+        "user": user, "csrf_token": session["csrf_token"],
+        "expires_at": session["expires_at"], "demo_enabled": demo_tools_enabled(),
+    }
+
+
+@app.get("/api/auth/me")
+async def current_staff(request: Request):
+    staff = request.state.staff
+    return {
+        "user": {key: staff[key] for key in ("id", "email", "name", "role")},
+        "csrf_token": staff["csrf_token"], "expires_at": staff["expires_at"],
+        "demo_enabled": demo_tools_enabled(),
+    }
+
+
+@app.post("/api/auth/logout", status_code=204)
+async def logout(request: Request, response: Response):
+    async with db_store.connect() as db:
+        await auth.revoke_session(db, request.cookies.get(auth.COOKIE_NAME, ""))
+    response.delete_cookie(auth.COOKIE_NAME, path="/")
+
+
+@app.get("/api/staff")
+async def list_staff(request: Request):
+    require_admin(request)
+    async with db_store.connect() as db:
+        cursor = await db.execute(
+            "SELECT id, email, name, role, active, last_login_at, created_at FROM staff_users ORDER BY name"
+        )
+        return [
+            {"id": row[0], "email": row[1], "name": row[2], "role": row[3],
+             "active": bool(row[4]), "last_login_at": row[5], "created_at": row[6]}
+            for row in await cursor.fetchall()
+        ]
+
+
+@app.post("/api/staff", status_code=201)
+async def create_staff(body: StaffCreateRequest, request: Request):
+    actor = require_admin(request)
+    email, name = body.email.strip().lower(), body.name.strip()
+    if "@" not in email or not name:
+        raise HTTPException(status_code=400, detail="A valid email and name are required")
+    try:
+        password_hash = auth.hash_password(body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    async with db_store.connect() as db:
+        try:
+            staff_id = await insert_returning_id(
+                db,
+                """INSERT INTO staff_users (email, name, role, password_hash, active, created_at)
+                   VALUES (?,?,?,?,1,?)""",
+                (email, name, body.role, password_hash, auth.utc_now().isoformat()),
+            )
+            await record_audit(db, actor, "staff.created", "staff_user", staff_id,
+                               {"email": email, "role": body.role})
+            await db.commit()
+        except Exception as exc:
+            if "unique" in str(exc).lower():
+                raise HTTPException(status_code=409, detail="A staff account with that email exists")
+            raise
+    return {"id": staff_id, "email": email, "name": name, "role": body.role, "active": True}
+
+
+@app.get("/api/settings/clinic")
+async def get_clinic_settings():
+    async with db_store.connect() as db:
+        row = await (await db.execute(
+            "SELECT clinic_name, timezone, escalation_phone, updated_at FROM clinic_settings WHERE id=1"
+        )).fetchone()
+    return {"clinic_name": row[0], "timezone": row[1], "escalation_phone": row[2], "updated_at": row[3]}
+
+
+@app.patch("/api/settings/clinic")
+async def update_clinic_settings(body: ClinicSettingsRequest, request: Request):
+    staff = require_admin(request)
+    try:
+        ZoneInfo(body.timezone)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Unknown timezone")
+    if not body.clinic_name.strip():
+        raise HTTPException(status_code=400, detail="Clinic name is required")
+    async with db_store.connect() as db:
+        await db.execute(
+            """UPDATE clinic_settings SET clinic_name=?, timezone=?, escalation_phone=?,
+                      updated_at=?, updated_by=? WHERE id=1""",
+            (body.clinic_name.strip(), body.timezone, body.escalation_phone.strip(),
+             datetime.now().isoformat(), staff["id"]),
+        )
+        await record_audit(db, staff, "clinic_settings.updated", "clinic", 1,
+                           {"clinic_name": body.clinic_name.strip(), "timezone": body.timezone})
+        await db.commit()
+    return {"clinic_name": body.clinic_name.strip(), "timezone": body.timezone,
+            "escalation_phone": body.escalation_phone.strip()}
+
+
+@app.patch("/api/staff/{staff_id}/status")
+async def update_staff_status(staff_id: int, body: StaffStatusRequest, request: Request):
+    actor = require_admin(request)
+    if staff_id == actor["id"] and not body.active:
+        raise HTTPException(status_code=409, detail="You cannot deactivate your own account")
+    async with db_store.connect() as db:
+        row = await (await db.execute("SELECT role FROM staff_users WHERE id=?", (staff_id,))).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Staff account not found")
+        if row[0] == "admin" and not body.active:
+            count = await (await db.execute(
+                "SELECT COUNT(*) FROM staff_users WHERE role='admin' AND active=1"
+            )).fetchone()
+            if count[0] <= 1:
+                raise HTTPException(status_code=409, detail="At least one active administrator is required")
+        await db.execute("UPDATE staff_users SET active=? WHERE id=?", (int(body.active), staff_id))
+        if not body.active:
+            await db.execute("DELETE FROM staff_sessions WHERE user_id=?", (staff_id,))
+        await record_audit(db, actor, "staff.status_changed", "staff_user", staff_id,
+                           {"active": body.active})
+        await db.commit()
+    return {"id": staff_id, "active": body.active}
+
+
+@app.post("/api/staff/{staff_id}/password", status_code=204)
+async def reset_staff_password(staff_id: int, body: StaffPasswordRequest, request: Request):
+    actor = require_admin(request)
+    try:
+        password_hash = auth.hash_password(body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    async with db_store.connect() as db:
+        cursor = await db.execute("UPDATE staff_users SET password_hash=? WHERE id=?", (password_hash, staff_id))
+        if cursor.rowcount != 1:
+            raise HTTPException(status_code=404, detail="Staff account not found")
+        await db.execute("DELETE FROM staff_sessions WHERE user_id=?", (staff_id,))
+        await record_audit(db, actor, "staff.password_reset", "staff_user", staff_id)
+        await db.commit()
+
+
+@app.get("/api/audit")
+async def get_audit_events(request: Request, limit: int = 100):
+    require_admin(request)
+    limit = max(1, min(limit, 500))
+    async with db_store.connect() as db:
+        cursor = await db.execute(
+            """SELECT id, staff_user_id, staff_name, action, subject_type,
+                      subject_id, details, created_at
+               FROM audit_events ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        )
+        return [
+            {"id": row[0], "staff_user_id": row[1], "staff_name": row[2],
+             "action": row[3], "subject_type": row[4], "subject_id": row[5],
+             "details": json.loads(row[6]), "created_at": row[7]}
+            for row in await cursor.fetchall()
+        ]
 
 async def compute_adherence(patient_id: int, db: Connection, days: int = 14) -> int:
     cursor = await db.execute(
-        f"SELECT response FROM adherence_logs WHERE patient_id=? AND log_date > date('now', '-{days} days')",
-        (patient_id,)
+        "SELECT response FROM adherence_logs WHERE patient_id=? AND log_date>?",
+        (patient_id, (date.today() - timedelta(days=days)).isoformat())
     )
     rows = await cursor.fetchall()
     if not rows:
@@ -131,8 +426,8 @@ async def compute_adherence(patient_id: int, db: Connection, days: int = 14) -> 
 
 async def compute_care_completion(patient_id: int, db: Connection, days: int = 14) -> int:
     cursor = await db.execute(
-        f"SELECT response FROM care_logs WHERE patient_id=? AND log_date > date('now', '-{days} days')",
-        (patient_id,),
+        "SELECT response FROM care_logs WHERE patient_id=? AND log_date>?",
+        (patient_id, (date.today() - timedelta(days=days)).isoformat()),
     )
     rows = await cursor.fetchall()
     if not rows:
@@ -177,13 +472,18 @@ async def get_patient_full(patient_id: int, db: Connection) -> dict:
 
     # Active escalations
     cursor = await db.execute(
-        """SELECT id, reason, risk_level, details, created_at FROM escalations
-           WHERE patient_id=? AND resolved=0 ORDER BY created_at DESC""",
+        """SELECT e.id, e.reason, e.risk_level, e.details, e.created_at,
+                  e.assigned_to, owner.name, e.acknowledged_at, e.due_at,
+                  e.notification_status
+           FROM escalations e LEFT JOIN staff_users owner ON owner.id=e.assigned_to
+           WHERE e.patient_id=? AND e.resolved=0 ORDER BY e.created_at DESC""",
         (patient_id,)
     )
     escs = await cursor.fetchall()
     patient["escalations"] = [
-        {"id": e[0], "reason": e[1], "risk_level": e[2], "details": json.loads(e[3]), "created_at": e[4]}
+        {"id": e[0], "reason": e[1], "risk_level": e[2], "details": json.loads(e[3]),
+         "created_at": e[4], "assigned_to": e[5], "assigned_to_name": e[6],
+         "acknowledged_at": e[7], "due_at": e[8], "notification_status": e[9]}
         for e in escs
     ]
 
@@ -251,6 +551,17 @@ async def get_patient_full(patient_id: int, db: Connection) -> dict:
     cs = await cursor.fetchone()
     patient["current_flow"] = cs[0] if cs else "idle"
 
+    cursor = await db.execute(
+        """SELECT consent_status, method, recorded_by, note, created_at
+           FROM consent_events WHERE patient_id=? ORDER BY created_at DESC LIMIT 10""",
+        (patient_id,),
+    )
+    patient["consent_history"] = [
+        {"status": row[0], "method": row[1], "recorded_by": row[2],
+         "note": row[3], "created_at": row[4]}
+        for row in await cursor.fetchall()
+    ]
+
     return patient
 
 
@@ -291,10 +602,40 @@ class EnrollRequest(BaseModel):
     next_follow_up: str = ""
     recall_date: str = ""
     doctor_name: str = "Dr. Mensah"
+    preferred_language: Literal["en", "tw-en", "gaa-en", "ewe-en", "pcm-en"] = "en"
+    reminder_time: str = "08:00"
+    consent_granted: bool = False
+
+
+class PatientCommunicationRequest(BaseModel):
+    preferred_language: Optional[Literal["en", "tw-en", "gaa-en", "ewe-en", "pcm-en"]] = None
+    reminder_time: Optional[str] = None
+    consent_status: Optional[Literal["pending", "granted", "withdrawn"]] = None
+    communication_opt_in: Optional[bool] = None
+    paused: Optional[bool] = None
 
 
 @app.post("/api/patients")
-async def enroll_patient(body: EnrollRequest):
+async def enroll_patient(body: EnrollRequest, request: Request):
+    require_admin(request)
+    missing_config = missing_production_config()
+    if missing_config and body.consent_granted:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "WhatsApp setup is incomplete. Save this patient with consent unchecked for now; "
+                "messaging can be activated after the missing production integrations are configured."
+            ),
+        )
+    if production_like() and body.category != "chronic":
+        raise HTTPException(
+            status_code=400,
+            detail="The production pilot currently enrols hypertension chronic-care patients only",
+        )
+    try:
+        datetime.strptime(body.reminder_time, "%H:%M")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Reminder time must be HH:MM")
     async with db_store.connect() as db:
         try:
             category_defaults = {
@@ -307,19 +648,39 @@ async def enroll_patient(body: EnrollRequest):
             condition = body.condition or default_condition
             service_type = body.service_type or default_service
             care_instructions = body.care_instructions or default_instructions
-            cursor = await db.execute(
+            pid = await insert_returning_id(
+                db,
                 """INSERT INTO patients (name, phone, age, condition, drug_name, drug_dosage,
                    category, service_type, care_instructions, next_follow_up, recall_date,
-                   enrolled_at, doctor_name, risk_level)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'green')""",
+                   enrolled_at, doctor_name, risk_level, preferred_language,
+                   reminder_time, consent_status, consent_recorded_at,
+                   consent_recorded_by, communication_opt_in)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'green',?,?,?,?,?,?)""",
                 (body.name, body.phone, body.age, condition, body.drug_name or "", body.drug_dosage or "",
                  body.category, service_type, care_instructions, body.next_follow_up, body.recall_date,
-                 date.today().isoformat(), body.doctor_name)
+                 date.today().isoformat(), body.doctor_name, body.preferred_language,
+                 body.reminder_time, "granted" if body.consent_granted else "pending",
+                 datetime.now().isoformat() if body.consent_granted else None,
+                 request.state.staff["name"] if body.consent_granted else "",
+                 int(body.consent_granted))
             )
-            pid = cursor.lastrowid
             await db.execute(
                 "INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?, 'idle', '{}')",
                 (pid,)
+            )
+            await db.execute(
+                """INSERT INTO consent_events
+                   (patient_id, consent_status, method, recorded_by, note, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (pid, "granted" if body.consent_granted else "pending", "staff_enrollment",
+                 request.state.staff["name"],
+                 "Patient agreed to WhatsApp care messages" if body.consent_granted else "Consent not yet recorded",
+                 datetime.now().isoformat()),
+            )
+            await record_audit(
+                db, request.state.staff, "patient.enrolled", "patient", pid,
+                {"consent_status": "granted" if body.consent_granted else "pending",
+                 "preferred_language": body.preferred_language},
             )
             await db.commit()
 
@@ -335,7 +696,10 @@ async def enroll_patient(body: EnrollRequest):
             )
             template_name = os.getenv("META_WELCOME_TEMPLATE", "").strip()
             template_language = os.getenv("META_WELCOME_TEMPLATE_LANGUAGE", "en_US").strip() or "en_US"
-            if template_name:
+            if not body.consent_granted:
+                delivery = whatsapp.SendResult(False, error="Consent is pending; no message was sent")
+                delivery_mode = "consent_pending"
+            elif template_name:
                 delivery = await whatsapp.send_template(
                     body.phone, template_name, template_language, [first],
                 )
@@ -344,20 +708,23 @@ async def enroll_patient(body: EnrollRequest):
                 delivery = await whatsapp.send_text_result(body.phone, welcome)
                 delivery_mode = "free_text"
 
-            channel = "whatsapp" if delivery.delivered else "simulator"
-            now = datetime.now().isoformat()
-            await db.execute(
-                """INSERT INTO messages
-                   (patient_id, direction, body, created_at, channel, delivery_status,
-                    delivery_error, external_message_id) VALUES (?,?,?,?,?,?,?,?)""",
-                (pid, "outbound", welcome, now, channel,
-                 "accepted" if delivery.delivered else "failed",
-                 delivery.error, delivery.message_id)
-            )
-            await db.commit()
+            channel = "whatsapp" if whatsapp.is_configured() else "simulator"
+            if body.consent_granted:
+                now = datetime.now().isoformat()
+                await db.execute(
+                    """INSERT INTO messages
+                       (patient_id, direction, body, created_at, channel, delivery_status,
+                        delivery_error, external_message_id) VALUES (?,?,?,?,?,?,?,?)""",
+                    (pid, "outbound", welcome, now, channel,
+                     "accepted" if delivery.delivered else "failed",
+                     delivery.error, delivery.message_id)
+                )
+                await db.commit()
 
             p = await get_patient_full(pid, db)
-            if delivery.delivered:
+            if not body.consent_granted:
+                delivery_note = "Patient saved with consent pending. No WhatsApp message was sent."
+            elif delivery.delivered:
                 delivery_note = (
                     "WhatsApp accepted the approved welcome template; delivery status will update in the conversation."
                     if delivery_mode == "template"
@@ -387,6 +754,57 @@ async def enroll_patient(body: EnrollRequest):
             raise HTTPException(500, str(e))
 
 
+@app.patch("/api/patients/{patient_id}/communication")
+async def update_patient_communication(
+    patient_id: int, body: PatientCommunicationRequest, request: Request,
+):
+    updates, params = [], []
+    if body.reminder_time is not None:
+        try:
+            datetime.strptime(body.reminder_time, "%H:%M")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Reminder time must be HH:MM")
+    for field in ("preferred_language", "reminder_time", "consent_status"):
+        value = getattr(body, field)
+        if value is not None:
+            updates.append(f"{field}=?")
+            params.append(value)
+    for field in ("communication_opt_in", "paused"):
+        value = getattr(body, field)
+        if value is not None:
+            updates.append(f"{field}=?")
+            params.append(int(value))
+    if body.consent_status is not None:
+        updates.extend(["consent_recorded_at=?", "consent_recorded_by=?"])
+        params.extend([datetime.now().isoformat(), request.state.staff["name"]])
+        if body.consent_status != "granted":
+            updates.append("communication_opt_in=0")
+    if not updates:
+        raise HTTPException(status_code=400, detail="No communication settings supplied")
+    params.append(patient_id)
+    async with db_store.connect() as db:
+        cursor = await db.execute("SELECT id FROM patients WHERE id=?", (patient_id,))
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Patient not found")
+        await db.execute(f"UPDATE patients SET {', '.join(updates)} WHERE id=?", tuple(params))
+        if body.consent_status is not None:
+            await db.execute(
+                """INSERT INTO consent_events
+                   (patient_id, consent_status, method, recorded_by, note, created_at)
+                   VALUES (?,?,'staff_update',?,?,?)""",
+                (patient_id, body.consent_status, request.state.staff["name"],
+                 "Communication consent updated in clinic workspace", datetime.now().isoformat()),
+            )
+        await record_audit(
+            db, request.state.staff, "patient.communication_updated", "patient", patient_id,
+            body.model_dump(exclude_none=True),
+        )
+        await db.commit()
+        patient = await get_patient_full(patient_id, db)
+    await manager.broadcast_all({"type": "patient_updated", "patient": patient})
+    return patient
+
+
 # ── Routes: messages ──────────────────────────────────────────────────────────
 
 @app.get("/api/patients/{patient_id}/messages")
@@ -395,7 +813,7 @@ async def get_messages(patient_id: int, limit: int = 50):
         cursor = await db.execute(
             "SELECT id, direction, body, reason, created_at, channel, audio_file, stt_provider, "
             "stt_language, stt_latency_ms, tts_provider, tts_voice, tts_latency_ms, "
-            "delivery_status, delivery_error, external_message_id "
+            "delivery_status, delivery_error, external_message_id, spoken_body "
             "FROM messages WHERE patient_id=? ORDER BY created_at DESC LIMIT ?",
             (patient_id, limit)
         )
@@ -411,6 +829,7 @@ async def get_messages(patient_id: int, limit: int = 50):
                 "delivery_status": r[13] or None,
                 "delivery_error": r[14] or None,
                 "external_message_id": r[15] or None,
+                "spoken_body": r[16] or None,
             }
             for r in reversed(rows)
         ]
@@ -454,6 +873,37 @@ class AppointmentUpdateRequest(BaseModel):
     status: Optional[Literal["confirmed", "cancelled", "completed", "no_show"]] = None
 
 
+async def speak_reply(text: str, language: str, accept: tuple):
+    """Voice a reply — in the patient's own language when we truly can.
+
+    When the pair has a real voice (Khaya: Twi, Ewe) *and* translation is
+    configured, the reply is translated first and spoken by that voice, because
+    a Twi voice reading English text is worse than an accented English voice
+    doing it. Every other case — including any failure along the way — falls
+    back to the existing chain speaking the English reply, so this path can
+    only ever add capability, never take it away.
+
+    Returns (SynthesisResult, spoken_body): spoken_body is the translated text
+    the voice actually said, or "" when the audio speaks the reply verbatim.
+    The stored message body stays English either way — spoken_body is what
+    keeps the clinical record honest about what the patient heard.
+    """
+    if translate.can_render(language) and language in tts.KHAYA_TTS_LANG:
+        translated = await translate.translate(text, language)
+        if translated.ok:
+            native = await tts.synthesize(
+                translated.text, language=language, provider="khaya", accept=accept,
+            )
+            if native.ok:
+                native.meta["translation"] = {
+                    "provider": translated.provider,
+                    "target": translated.target,
+                    "latency_ms": translated.latency_ms,
+                }
+                return native, translated.text
+    return await tts.synthesize(text, language=language, accept=accept), ""
+
+
 async def ingest_patient_message(patient_id: int, text: str, voice: dict | None = None,
                                  channel: str = "simulator"):
     """Run one inbound patient turn: log it, let the bot act, broadcast everything.
@@ -470,14 +920,14 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
 
     async with db_store.connect() as db:
         # Log inbound
-        cursor = await db.execute(
+        inbound_id = await insert_returning_id(
+            db,
             "INSERT INTO messages (patient_id, direction, body, created_at, channel, audio_file, stt_provider, stt_language, stt_latency_ms) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
             (patient_id, "inbound", text, now, channel, voice.get("audio_file", ""),
              voice.get("stt_provider", ""), voice.get("stt_language", ""),
              voice.get("stt_latency_ms", 0))
         )
-        inbound_id = cursor.lastrowid
         await db.commit()
 
         inbound_msg = {
@@ -491,8 +941,50 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
         }
         await manager.broadcast(patient_id, {"type": "message", "message": inbound_msg})
 
-        # Process and get bot reply
-        bot_reply, reason, escalation_created = await process_message(patient_id, text, db)
+        # Consent keywords are deterministic boundary rules, never an LLM
+        # interpretation. A patient can stop outreach from the same channel at
+        # any time; START records a fresh affirmative opt-in.
+        normalized = text.strip().upper()
+        if normalized in {"STOP", "UNSUBSCRIBE", "PAUSE"}:
+            await db.execute(
+                """UPDATE patients SET consent_status='withdrawn', communication_opt_in=0,
+                          paused=1, consent_recorded_at=?, consent_recorded_by='Patient WhatsApp'
+                   WHERE id=?""",
+                (datetime.now().isoformat(), patient_id),
+            )
+            await db.execute(
+                """INSERT INTO consent_events
+                   (patient_id, consent_status, method, recorded_by, note, created_at)
+                   VALUES (?,'withdrawn','patient_message','Patient WhatsApp',?,?)""",
+                (patient_id, normalized, datetime.now().isoformat()),
+            )
+            await db.commit()
+            bot_reply = (
+                "Your VeloxaCare messages are now stopped. You can still contact your clinic directly. "
+                "Reply START if you want to receive care messages again."
+            )
+            reason, escalation_created = None, False
+        elif normalized == "START":
+            await db.execute(
+                """UPDATE patients SET consent_status='granted', communication_opt_in=1,
+                          paused=0, consent_recorded_at=?, consent_recorded_by='Patient WhatsApp'
+                   WHERE id=?""",
+                (datetime.now().isoformat(), patient_id),
+            )
+            await db.execute(
+                """INSERT INTO consent_events
+                   (patient_id, consent_status, method, recorded_by, note, created_at)
+                   VALUES (?,'granted','patient_message','Patient WhatsApp','START',?)""",
+                (patient_id, datetime.now().isoformat()),
+            )
+            await db.commit()
+            bot_reply = (
+                "You’re set up to receive VeloxaCare messages. Reply STOP at any time to pause them."
+            )
+            reason, escalation_created = None, False
+        else:
+            # Process and get bot reply
+            bot_reply, reason, escalation_created = await process_message(patient_id, text, db)
 
         # Answer in the modality the patient used: a voice note gets a spoken
         # reply. Patients who send voice are disproportionately the ones who
@@ -503,8 +995,9 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
         # before the row is written so the message arrives with its audio
         # already attached rather than appearing mute and then updating.
         spoken = None
+        spoken_body = ""
         if tts.should_speak(bool(voice)):
-            spoken = await tts.synthesize(
+            spoken, spoken_body = await speak_reply(
                 bot_reply,
                 language=voice.get("stt_language") or os.getenv("WHATSAPP_STT_LANGUAGE", "en"),
                 # WhatsApp takes MP3, and Ogg/Opus as a true voice-note bubble;
@@ -526,14 +1019,15 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
 
         # Log outbound
         bot_now = datetime.now().isoformat()
-        cursor = await db.execute(
+        outbound_id = await insert_returning_id(
+            db,
             "INSERT INTO messages (patient_id, direction, body, reason, created_at, channel, "
-            "audio_file, tts_provider, tts_voice, tts_latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "audio_file, tts_provider, tts_voice, tts_latency_ms, spoken_body) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (patient_id, "outbound", bot_reply, reason, bot_now, channel, reply_audio,
              spoken.provider if reply_audio else "", spoken.voice if reply_audio else "",
-             spoken.latency_ms if reply_audio else 0)
+             spoken.latency_ms if reply_audio else 0,
+             spoken_body if reply_audio else "")
         )
-        outbound_id = cursor.lastrowid
         await db.commit()
 
         outbound_msg = {
@@ -544,6 +1038,7 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
             "tts_provider": spoken.provider if reply_audio else None,
             "tts_voice": spoken.voice if reply_audio else None,
             "tts_latency_ms": spoken.latency_ms if reply_audio else None,
+            "spoken_body": (spoken_body if reply_audio else "") or None,
         }
         await manager.broadcast(patient_id, {"type": "message", "message": outbound_msg})
 
@@ -582,7 +1077,39 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
             )
             esc = await cursor.fetchone()
             if esc:
-                esc_data = {"id": esc[0], "reason": esc[1], "risk_level": esc[2], "details": json.loads(esc[3]), "created_at": esc[4], "patient_id": patient_id, "patient_name": p["name"]}
+                due_at = (datetime.now() + timedelta(hours=4 if esc[2] == "red" else 24)).isoformat()
+                settings = await (await db.execute(
+                    "SELECT escalation_phone FROM clinic_settings WHERE id=1"
+                )).fetchone()
+                alert_phone = (settings[0] if settings else "") or ""
+                alert_template = os.getenv("META_STAFF_ALERT_TEMPLATE", "").strip()
+                if alert_phone and alert_template:
+                    notification = await whatsapp.send_template(
+                        alert_phone, alert_template,
+                        os.getenv("META_STAFF_ALERT_TEMPLATE_LANGUAGE", "en_US"),
+                        [p["name"], esc[2].upper(), esc[1][:120]],
+                    )
+                    notification_status = "accepted" if notification.delivered else "failed"
+                else:
+                    notification = whatsapp.SendResult(
+                        False, error="Staff alert phone or approved template is not configured",
+                    )
+                    notification_status = "dashboard_only"
+                await db.execute(
+                    """UPDATE escalations SET due_at=?, notification_status=?,
+                              notification_error=?, notification_message_id=? WHERE id=?""",
+                    (due_at, notification_status, notification.error,
+                     notification.message_id, esc[0]),
+                )
+                await db.commit()
+                esc_data = {
+                    "id": esc[0], "reason": esc[1], "risk_level": esc[2],
+                    "details": json.loads(esc[3]), "created_at": esc[4],
+                    "patient_id": patient_id, "patient_name": p["name"],
+                    "assigned_to": None, "assigned_to_name": None,
+                    "acknowledged_at": None, "due_at": due_at,
+                    "notification_status": notification_status,
+                }
                 await manager.broadcast_all({"type": "escalation", "escalation": esc_data})
 
         return {"inbound": inbound_msg, "reply": outbound_msg, "escalation_created": escalation_created}
@@ -591,6 +1118,8 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
 @app.post("/api/patients/{patient_id}/messages")
 async def send_patient_message(patient_id: int, body: InboundMessage):
     """Simulate patient sending a WhatsApp text message."""
+    if not demo_tools_enabled():
+        raise HTTPException(status_code=404, detail="Simulator is disabled in production")
     return await ingest_patient_message(patient_id, body.message)
 
 
@@ -647,6 +1176,11 @@ async def tts_status():
         "cooling_down": cooling,
         "mode": tts.mode(),
         "enabled": bool(configured) and tts.mode() != "off",
+        # Whether replies can be translated into the patient's language before
+        # being spoken (Khaya MT) — the difference between a Twi voice note
+        # answered in Twi and one answered in English audio.
+        "translation": translate.available(),
+        "native_voice_pairs": sorted(tts.KHAYA_TTS_LANG) if translate.available() else [],
     }
 
 
@@ -665,6 +1199,8 @@ async def send_patient_voice_note(
     included. `provider` pins a specific model, which is how we demo the same
     utterance through Sahara vs Whisper side by side.
     """
+    if not demo_tools_enabled():
+        raise HTTPException(status_code=404, detail="Simulator is disabled in production")
     async with db_store.connect() as db:
         cursor = await db.execute("SELECT id FROM patients WHERE id=?", (patient_id,))
         if await cursor.fetchone() is None:
@@ -723,23 +1259,46 @@ async def send_patient_voice_note(
 # the sender to a patient, turn voice notes into text, and hand off to
 # ingest_patient_message(). No conversation logic lives here.
 
-# Meta retries deliveries aggressively; without this a patient gets two replies
-# to one message. Bounded so a long-running process can't grow without limit.
-_seen_wa_messages: dict[str, float] = {}
-_SEEN_LIMIT = 2000
-
-
-def _already_handled(message_id: str) -> bool:
+# Meta retries deliveries aggressively. This claim lives in the durable store,
+# not process memory, because separate serverless instances see the same retry.
+async def _claim_whatsapp_event(message_id: str) -> bool:
     if not message_id:
-        return False
-    if message_id in _seen_wa_messages:
         return True
-    if len(_seen_wa_messages) >= _SEEN_LIMIT:
-        oldest = sorted(_seen_wa_messages, key=_seen_wa_messages.get)[:_SEEN_LIMIT // 2]
-        for k in oldest:
-            _seen_wa_messages.pop(k, None)
-    _seen_wa_messages[message_id] = datetime.now().timestamp()
-    return False
+    async with db_store.connect() as db:
+        cursor = await db.execute(
+            """INSERT INTO inbound_events
+               (external_message_id, status, received_at) VALUES (?, 'processing', ?)
+               ON CONFLICT(external_message_id) DO NOTHING""",
+            (message_id, datetime.now().isoformat()),
+        )
+        await db.commit()
+        if cursor.rowcount == 1:
+            return True
+        existing = await (await db.execute(
+            "SELECT status FROM inbound_events WHERE external_message_id=?", (message_id,),
+        )).fetchone()
+        if existing and existing[0] in {"failed", "processing"}:
+            retry = await db.execute(
+                """UPDATE inbound_events SET status='processing', error='', received_at=?
+                   WHERE external_message_id=? AND
+                     (status='failed' OR (status='processing' AND received_at<?))""",
+                (datetime.now().isoformat(), message_id,
+                 (datetime.now() - timedelta(minutes=5)).isoformat()),
+            )
+            await db.commit()
+            return retry.rowcount == 1
+        return False
+
+
+async def _finish_whatsapp_event(message_id: str, status: str = "processed", error: str = "") -> None:
+    if not message_id:
+        return
+    async with db_store.connect() as db:
+        await db.execute(
+            "UPDATE inbound_events SET status=?, processed_at=?, error=? WHERE external_message_id=?",
+            (status, datetime.now().isoformat(), error[:1000], message_id),
+        )
+        await db.commit()
 
 
 async def _record_whatsapp_statuses(statuses: list[dict]) -> int:
@@ -791,14 +1350,15 @@ async def _patient_by_phone(phone: str) -> Optional[dict]:
     """
     target = whatsapp.normalize_phone(phone)
     async with db_store.connect() as db:
-        cursor = await db.execute("SELECT id, name, phone FROM patients")
+        cursor = await db.execute("SELECT id, name, phone, preferred_language FROM patients")
         rows = await cursor.fetchall()
-    for pid, name, stored in rows:
+    for pid, name, stored, preferred_language in rows:
         digits = whatsapp.normalize_phone(stored or "")
         if not digits:
             continue
         if digits == target or digits.endswith(target[-9:]) or target.endswith(digits[-9:]):
-            return {"id": pid, "name": name, "phone": stored}
+            return {"id": pid, "name": name, "phone": stored,
+                    "preferred_language": preferred_language or "en"}
     return None
 
 
@@ -816,94 +1376,103 @@ async def whatsapp_verify(
         raise HTTPException(status_code=403, detail="Verification token mismatch")
 
 
-@app.post("/webhook/whatsapp")
-async def whatsapp_receive(request: Request):
-    """Inbound WhatsApp message — text or voice note.
-
-    Always returns 200 once the signature checks out. Meta retries anything else,
-    and a retry storm on a parse error is worse than dropping one message.
-    """
-    raw = await request.body()
-    if not whatsapp.verify_signature(raw, request.headers.get("x-hub-signature-256")):
-        raise HTTPException(status_code=403, detail="Invalid webhook signature")
-
-    try:
-        body = json.loads(raw)
-        value = body["entry"][0]["changes"][0]["value"]
-    except Exception:
-        return {"status": "ignored"}
-
-    if "messages" not in value:
-        updated = await _record_whatsapp_statuses(value.get("statuses") or [])
-        return {"status": "delivery_updated" if updated else "no_message", "updated": updated}
-
-    message = value["messages"][0]
+async def _process_whatsapp_message(message: dict) -> dict:
+    """Process one item from a possibly batched Meta webhook payload."""
     message_id = message.get("id", "")
     sender = message.get("from", "")
     msg_type = message.get("type", "")
 
-    if _already_handled(message_id):
+    if not await _claim_whatsapp_event(message_id):
         return {"status": "duplicate_ignored"}
-
-    patient = await _patient_by_phone(sender)
-    if patient is None:
-        # Unknown number: answer helpfully, never silently. Do not auto-enrol —
-        # enrolment is a consented clinical act, not a side effect of texting.
-        await whatsapp.send_text(
-            sender,
-            "Hello! This number isn't registered with the clinic yet. "
-            "Please contact your care team to be enrolled.",
-        )
-        return {"status": "unknown_sender"}
-
-    if msg_type == "text":
-        text = (message.get("text", {}).get("body") or "").strip()
-        if not text:
-            return {"status": "empty"}
-        await ingest_patient_message(patient["id"], text, channel="whatsapp")
-        return {"status": "ok"}
-
-    if msg_type in ("audio", "voice"):
-        media_id = message.get(msg_type, {}).get("id")
-        stored = await whatsapp.download_media(
-            media_id, ensure_voice_dir(), f"p{patient['id']}_{uuid.uuid4().hex[:12]}"
-        ) if media_id else None
-
-        if stored is None:
-            await whatsapp.send_text(
-                sender, "Sorry, I couldn't download that voice note. Please try again."
-            )
-            return {"status": "media_failed"}
-
-        # Language hint: WhatsApp gives us none, so use the deployment default.
-        # Sahara's Ghanaian codes are what make this worth configuring.
-        language = os.getenv("WHATSAPP_STT_LANGUAGE", "en")
-        result = await stt.transcribe(str(stored), language=language)
-
-        if not result.ok:
+    try:
+        patient = await _patient_by_phone(sender)
+        if patient is None:
+            # Unknown numbers are never auto-enrolled: enrolment is a consented
+            # clinical act, not a side effect of texting.
             await whatsapp.send_text(
                 sender,
-                "Sorry, I couldn't hear that clearly. Please send it again, or type your message.",
+                "Hello! This number isn't registered with the clinic yet. "
+                "Please contact your care team to be enrolled.",
             )
-            return {"status": "stt_failed", "error": result.error}
+            await _finish_whatsapp_event(message_id)
+            return {"status": "unknown_sender"}
 
-        await ingest_patient_message(
-            patient["id"], result.text,
-            voice={
-                "audio_file": stored.name,
-                "stt_provider": result.provider,
-                "stt_language": language,
-                "stt_latency_ms": result.latency_ms,
-            },
-            channel="whatsapp",
+        if msg_type == "text":
+            text = (message.get("text", {}).get("body") or "").strip()
+            if not text:
+                await _finish_whatsapp_event(message_id)
+                return {"status": "empty"}
+            await ingest_patient_message(patient["id"], text, channel="whatsapp")
+            await _finish_whatsapp_event(message_id)
+            return {"status": "ok"}
+
+        if msg_type in ("audio", "voice"):
+            media_id = message.get(msg_type, {}).get("id")
+            stored = await whatsapp.download_media(
+                media_id, ensure_voice_dir(), f"p{patient['id']}_{uuid.uuid4().hex[:12]}"
+            ) if media_id else None
+            if stored is None:
+                await whatsapp.send_text(
+                    sender, "Sorry, I couldn't download that voice note. Please try again."
+                )
+                await _finish_whatsapp_event(message_id)
+                return {"status": "media_failed"}
+
+            language = patient.get("preferred_language") or os.getenv("WHATSAPP_STT_LANGUAGE", "en")
+            result = await stt.transcribe(str(stored), language=language)
+            if not result.ok:
+                await whatsapp.send_text(
+                    sender,
+                    "Sorry, I couldn't hear that clearly. Please send it again, or type your message.",
+                )
+                await _finish_whatsapp_event(message_id)
+                return {"status": "stt_failed", "error": result.error}
+
+            await ingest_patient_message(
+                patient["id"], result.text,
+                voice={
+                    "audio_file": stored.name, "stt_provider": result.provider,
+                    "stt_language": language, "stt_latency_ms": result.latency_ms,
+                },
+                channel="whatsapp",
+            )
+            await _finish_whatsapp_event(message_id)
+            return {"status": "ok"}
+
+        await whatsapp.send_text(
+            sender,
+            "I can read text and listen to voice notes. Please send one of those.",
         )
-        return {"status": "ok"}
+        await _finish_whatsapp_event(message_id)
+        return {"status": "unsupported_type"}
+    except Exception as exc:
+        logging.getLogger(__name__).exception("WhatsApp message processing failed")
+        await _finish_whatsapp_event(message_id, "failed", f"{type(exc).__name__}: {exc}")
+        return {"status": "processing_failed"}
 
-    await whatsapp.send_text(
-        sender,
-        "I can read text and listen to voice notes. Please send one of those.",
-    )
-    return {"status": "unsupported_type"}
+
+@app.post("/webhook/whatsapp")
+async def whatsapp_receive(request: Request):
+    """Validate and process every message and receipt in a Meta webhook batch."""
+    raw = await request.body()
+    if not whatsapp.verify_signature(raw, request.headers.get("x-hub-signature-256")):
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+    try:
+        body = json.loads(raw)
+        values = [
+            change.get("value") or {}
+            for entry in body.get("entry", [])
+            for change in entry.get("changes", [])
+        ]
+    except Exception:
+        return {"status": "ignored"}
+    updated = 0
+    results = []
+    for value in values:
+        updated += await _record_whatsapp_statuses(value.get("statuses") or [])
+        for message in value.get("messages") or []:
+            results.append(await _process_whatsapp_message(message))
+    return {"status": "processed", "messages": results, "delivery_updates": updated}
 
 
 @app.get("/api/voice/{filename}")
@@ -918,7 +1487,9 @@ async def get_voice_note(filename: str):
 
 # ── Routes: actions ───────────────────────────────────────────────────────────
 
-async def send_care_team_message(patient_id: int, body: str, db: Connection) -> dict:
+async def send_care_team_message(
+    patient_id: int, body: str, db: Connection, staff: dict | None = None,
+) -> dict:
     """Deliver one approved care-team message and record the actual channel.
 
     With Meta configured this is a real WhatsApp send. Without it, the message
@@ -931,30 +1502,43 @@ async def send_care_team_message(patient_id: int, body: str, db: Connection) -> 
     if len(body) > 1000:
         raise HTTPException(status_code=400, detail="Message must be 1000 characters or fewer")
 
-    cursor = await db.execute("SELECT name, phone FROM patients WHERE id=?", (patient_id,))
+    cursor = await db.execute(
+        """SELECT name, phone, consent_status, communication_opt_in, paused
+           FROM patients WHERE id=?""",
+        (patient_id,),
+    )
     patient = await cursor.fetchone()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+    if patient[2] != "granted" or not patient[3] or patient[4]:
+        raise HTTPException(
+            status_code=409,
+            detail="Patient communication is not active. Confirm consent and unpause outreach first.",
+        )
 
     delivery = whatsapp.SendResult(False, error="WhatsApp credentials are not configured")
-    channel = "simulator"
+    channel = "whatsapp" if whatsapp.is_configured() else "simulator"
     if whatsapp.is_configured():
         delivery = await whatsapp.send_text_result(patient[1], body)
-        if delivery.delivered:
-            channel = "whatsapp"
 
     now = datetime.now().isoformat()
-    cursor = await db.execute(
+    message_id = await insert_returning_id(
+        db,
         """INSERT INTO messages
            (patient_id, direction, body, created_at, channel, delivery_status,
             delivery_error, external_message_id) VALUES (?,?,?,?,?,?,?,?)""",
         (patient_id, "outbound", body, now, channel,
          "accepted" if delivery.delivered else "failed",
-         delivery.error, delivery.message_id),
+        delivery.error, delivery.message_id),
     )
+    if staff:
+        await record_audit(
+            db, staff, "patient.outreach_sent", "patient", patient_id,
+            {"message_id": message_id, "delivery_status": "accepted" if delivery.delivered else "failed"},
+        )
     await db.commit()
     message = {
-        "id": cursor.lastrowid,
+        "id": message_id,
         "direction": "outbound",
         "body": body,
         "reason": None,
@@ -986,29 +1570,135 @@ async def send_care_team_message(patient_id: int, body: str, db: Connection) -> 
 
 
 @app.post("/api/patients/{patient_id}/outreach")
-async def send_outreach(patient_id: int, body: OutreachRequest):
+async def send_outreach(patient_id: int, body: OutreachRequest, request: Request):
     """Send a human-authored care-team message to a patient."""
     async with db_store.connect() as db:
-        return await send_care_team_message(patient_id, body.message, db)
+        return await send_care_team_message(patient_id, body.message, db, request.state.staff)
 
 @app.post("/api/patients/{patient_id}/remind")
-async def send_reminder(patient_id: int):
+async def send_reminder(patient_id: int, request: Request):
     """Send the category-specific care reminder."""
     async with db_store.connect() as db:
         reminder = await trigger_care_reminder(patient_id, db)
         if not reminder:
             raise HTTPException(status_code=404, detail="Patient not found")
-        return await send_care_team_message(patient_id, reminder, db)
+        return await send_care_team_message(patient_id, reminder, db, request.state.staff)
 
 
 @app.post("/api/patients/{patient_id}/checkin")
-async def send_checkin(patient_id: int):
+async def send_checkin(patient_id: int, request: Request):
     """Send the category-specific check-in prompt."""
     async with db_store.connect() as db:
         prompt = await trigger_checkin(patient_id, db)
         if not prompt:
             raise HTTPException(status_code=404, detail="Patient not found")
-        return await send_care_team_message(patient_id, prompt, db)
+        return await send_care_team_message(patient_id, prompt, db, request.state.staff)
+
+
+# ── Scheduled outreach ───────────────────────────────────────────────────────
+
+@app.get("/api/cron/hourly")
+async def hourly_reminders(request: Request):
+    """Dispatch due reminders once, with durable retry and delivery records."""
+    expected = os.getenv("CRON_SECRET", "")
+    supplied = request.headers.get("authorization", "")
+    if not expected or not secrets.compare_digest(supplied, f"Bearer {expected}"):
+        raise HTTPException(status_code=401, detail="Invalid cron authorization")
+
+    now = datetime.now(ZoneInfo("Africa/Accra"))
+    dispatch_date, hour = now.date().isoformat(), f"{now.hour:02d}"
+    template_name = os.getenv("META_MEDICATION_REMINDER_TEMPLATE", "").strip()
+    template_language = os.getenv("META_MEDICATION_REMINDER_TEMPLATE_LANGUAGE", "en_US").strip() or "en_US"
+    sent, failed, skipped = 0, 0, 0
+
+    async with db_store.connect() as db:
+        await db.execute("DELETE FROM staff_sessions WHERE expires_at<=?", (auth.utc_now().isoformat(),))
+        await db.execute(
+            "DELETE FROM inbound_events WHERE received_at<?",
+            ((datetime.now() - timedelta(days=30)).isoformat(),),
+        )
+        cursor = await db.execute(
+            """SELECT id, name, phone, drug_name, drug_dosage, preferred_language
+               FROM patients
+               WHERE status='active' AND category='chronic' AND consent_status='granted'
+                 AND communication_opt_in=1 AND paused=0
+                 AND substr(reminder_time,1,2)=? ORDER BY id""",
+            (hour,),
+        )
+        patients_due = await cursor.fetchall()
+
+        for patient_id, name, phone, drug, dosage, preferred_language in patients_due:
+            timestamp = now.isoformat()
+            await db.execute(
+                """INSERT INTO reminder_dispatches
+                   (patient_id, reminder_kind, dispatch_date, scheduled_for, status,
+                    attempts, created_at, updated_at)
+                   VALUES (?, 'medication', ?, ?, 'pending', 0, ?, ?)
+                   ON CONFLICT(patient_id, reminder_kind, dispatch_date) DO NOTHING""",
+                (patient_id, dispatch_date, timestamp, timestamp, timestamp),
+            )
+            claim = await db.execute(
+                """UPDATE reminder_dispatches SET status='sending', attempts=attempts+1, updated_at=?
+                   WHERE patient_id=? AND reminder_kind='medication' AND dispatch_date=?
+                     AND status IN ('pending','failed') AND attempts<3""",
+                (timestamp, patient_id, dispatch_date),
+            )
+            await db.commit()
+            if claim.rowcount != 1:
+                skipped += 1
+                continue
+
+            body = await trigger_care_reminder(patient_id, db)
+            language_suffix = {
+                "tw-en": "TWI", "gaa-en": "GA", "ewe-en": "EWE", "pcm-en": "PIDGIN",
+            }.get(preferred_language, "EN")
+            patient_template = os.getenv(
+                f"META_MEDICATION_REMINDER_TEMPLATE_{language_suffix}", template_name,
+            ).strip()
+            patient_template_language = os.getenv(
+                f"META_MEDICATION_REMINDER_TEMPLATE_LANGUAGE_{language_suffix}", template_language,
+            ).strip() or template_language
+            if not patient_template:
+                delivery = whatsapp.SendResult(False, error="Medication reminder template is not configured")
+            else:
+                delivery = await whatsapp.send_template(
+                    phone, patient_template, patient_template_language,
+                    [display_first_name(name), drug or "your medicine", dosage or "as prescribed"],
+                )
+            status = "sent" if delivery.delivered else "failed"
+            await db.execute(
+                """UPDATE reminder_dispatches
+                   SET status=?, last_error=?, external_message_id=?, updated_at=?
+                   WHERE patient_id=? AND reminder_kind='medication' AND dispatch_date=?""",
+                (status, delivery.error, delivery.message_id, datetime.now().isoformat(),
+                 patient_id, dispatch_date),
+            )
+            message_id = await insert_returning_id(
+                db,
+                """INSERT INTO messages
+                   (patient_id, direction, body, created_at, channel, delivery_status,
+                    delivery_error, external_message_id) VALUES (?,?,?,?,?,?,?,?)""",
+                (patient_id, "outbound", body, datetime.now().isoformat(), "whatsapp",
+                 "accepted" if delivery.delivered else "failed", delivery.error, delivery.message_id),
+            )
+            await db.commit()
+            event = {
+                "type": "message", "patient_id": patient_id,
+                "message": {"id": message_id, "direction": "outbound",
+                            "body": body, "created_at": datetime.now().isoformat(),
+                            "channel": "whatsapp", "delivery_status": "accepted" if delivery.delivered else "failed",
+                            "delivery_error": delivery.error or None,
+                            "external_message_id": delivery.message_id or None},
+            }
+            await manager.broadcast(patient_id, event)
+            await manager.broadcast_all(event)
+            if delivery.delivered:
+                sent += 1
+            else:
+                failed += 1
+        await db.commit()
+    return {"status": "ok", "date": dispatch_date, "due": len(patients_due),
+            "sent": sent, "failed": failed, "skipped": skipped}
 
 
 # ── Routes: appointments ─────────────────────────────────────────────────────
@@ -1107,8 +1797,11 @@ async def update_appointment(appointment_id: int, body: AppointmentUpdateRequest
 async def get_alerts():
     async with db_store.connect() as db:
         cursor = await db.execute(
-            """SELECT e.id, e.patient_id, p.name, e.reason, e.risk_level, e.details, e.created_at
+            """SELECT e.id, e.patient_id, p.name, e.reason, e.risk_level, e.details,
+                      e.created_at, e.assigned_to, owner.name, e.acknowledged_at,
+                      e.due_at, e.notification_status
                FROM escalations e JOIN patients p ON e.patient_id=p.id
+               LEFT JOIN staff_users owner ON owner.id=e.assigned_to
                WHERE e.resolved=0 ORDER BY e.risk_level ASC, e.created_at DESC""",
         )
         rows = await cursor.fetchall()
@@ -1116,14 +1809,46 @@ async def get_alerts():
             {
                 "id": r[0], "patient_id": r[1], "patient_name": r[2],
                 "reason": r[3], "risk_level": r[4],
-                "details": json.loads(r[5]), "created_at": r[6]
+                "details": json.loads(r[5]), "created_at": r[6],
+                "assigned_to": r[7], "assigned_to_name": r[8],
+                "acknowledged_at": r[9], "due_at": r[10],
+                "notification_status": r[11],
             }
             for r in rows
         ]
 
 
+@app.post("/api/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: int, request: Request):
+    staff, now = request.state.staff, datetime.now().isoformat()
+    async with db_store.connect() as db:
+        cursor = await db.execute(
+            "SELECT patient_id, acknowledged_at FROM escalations WHERE id=? AND resolved=0",
+            (alert_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Open alert not found")
+        await db.execute(
+            """UPDATE escalations SET assigned_to=?, acknowledged_by=?,
+                      acknowledged_at=COALESCE(acknowledged_at, ?)
+               WHERE id=?""",
+            (staff["id"], staff["id"], now, alert_id),
+        )
+        await record_audit(db, staff, "escalation.acknowledged", "escalation", alert_id)
+        await db.commit()
+        patient = await get_patient_full(row[0], db)
+    event = {
+        "type": "alert_acknowledged", "alert_id": alert_id, "patient_id": row[0],
+        "assigned_to": staff["id"], "assigned_to_name": staff["name"],
+        "acknowledged_at": row[1] or now, "patient": patient,
+    }
+    await manager.broadcast_all(event)
+    return event
+
+
 @app.post("/api/alerts/{alert_id}/resolve")
-async def resolve_alert(alert_id: int, body: ResolveAlertRequest):
+async def resolve_alert(alert_id: int, body: ResolveAlertRequest, request: Request):
     async with db_store.connect() as db:
         cursor = await db.execute(
             "SELECT patient_id FROM escalations WHERE id=? AND resolved=0",
@@ -1135,7 +1860,7 @@ async def resolve_alert(alert_id: int, body: ResolveAlertRequest):
         patient_id = row[0]
 
         note = body.note.strip()
-        resolved_by = body.resolved_by.strip() or "Care team"
+        resolved_by = request.state.staff["name"]
         if len(note) > 1000:
             raise HTTPException(status_code=400, detail="Resolution note must be 1000 characters or fewer")
         if len(resolved_by) > 100:
@@ -1160,6 +1885,10 @@ async def resolve_alert(alert_id: int, body: ResolveAlertRequest):
         remaining = await cursor.fetchone()
         risk_level = remaining[0] if remaining else "green"
         await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk_level, patient_id))
+        await record_audit(
+            db, request.state.staff, "escalation.resolved", "escalation", alert_id,
+            {"resolution_code": body.resolution_code, "patient_id": patient_id},
+        )
         await db.commit()
         patient = await get_patient_full(patient_id, db)
         await manager.broadcast_all({
@@ -1175,6 +1904,80 @@ async def resolve_alert(alert_id: int, body: ResolveAlertRequest):
             "risk_level": risk_level,
             "resolved_at": resolved_at,
         }
+
+
+@app.get("/api/worklist/today")
+async def today_worklist(request: Request):
+    """One operational queue: urgent cases, due follow-ups and failed delivery."""
+    staff = request.state.staff
+    today = date.today().isoformat()
+    now = datetime.now().isoformat()
+    async with db_store.connect() as db:
+        alert_cursor = await db.execute(
+            """SELECT e.id, e.patient_id, p.name, e.reason, e.risk_level, e.created_at,
+                      e.acknowledged_at, e.assigned_to, owner.name, e.due_at, e.details,
+                      e.notification_status
+               FROM escalations e JOIN patients p ON p.id=e.patient_id
+               LEFT JOIN staff_users owner ON owner.id=e.assigned_to
+               WHERE e.resolved=0
+               ORDER BY CASE WHEN e.assigned_to=? THEN 0 WHEN e.assigned_to IS NULL THEN 1 ELSE 2 END,
+                        CASE e.risk_level WHEN 'red' THEN 0 ELSE 1 END, e.created_at""",
+            (staff["id"],),
+        )
+        appointment_cursor = await db.execute(
+            """SELECT a.id, a.patient_id, p.name, a.appointment_time, a.clinician_name,
+                      a.visit_type, a.status
+               FROM appointments a JOIN patients p ON p.id=a.patient_id
+               WHERE a.appointment_date=? AND a.status='confirmed' ORDER BY a.appointment_time""",
+            (today,),
+        )
+        failure_cursor = await db.execute(
+            """SELECT m.id, m.patient_id, p.name, m.body, m.delivery_error, m.created_at
+               FROM messages m JOIN patients p ON p.id=m.patient_id
+               WHERE m.direction='outbound' AND m.delivery_status='failed'
+                 AND m.created_at>=? ORDER BY m.created_at DESC LIMIT 25""",
+            ((datetime.now() - timedelta(days=7)).isoformat(),),
+        )
+        due_cursor = await db.execute(
+            """SELECT p.id, p.name, p.reminder_time FROM patients p
+               LEFT JOIN reminder_dispatches d ON d.patient_id=p.id
+                 AND d.reminder_kind='medication' AND d.dispatch_date=?
+               WHERE p.status='active' AND p.category='chronic' AND p.consent_status='granted'
+                 AND p.communication_opt_in=1 AND p.paused=0 AND p.reminder_time<=?
+                 AND (d.id IS NULL OR d.status='failed')
+               ORDER BY p.reminder_time, p.name""",
+            (today, datetime.now().strftime("%H:%M")),
+        )
+        alerts = [
+            {"id": r[0], "patient_id": r[1], "patient_name": r[2], "reason": r[3],
+             "risk_level": r[4], "created_at": r[5], "acknowledged_at": r[6],
+             "assigned_to": r[7], "assigned_to_name": r[8], "due_at": r[9],
+             "details": json.loads(r[10]), "notification_status": r[11],
+             "overdue": bool(r[9] and r[9] < now)}
+            for r in await alert_cursor.fetchall()
+        ]
+        appointments_today = [
+            {"id": r[0], "patient_id": r[1], "patient_name": r[2], "appointment_time": r[3],
+             "clinician_name": r[4], "visit_type": r[5], "status": r[6]}
+            for r in await appointment_cursor.fetchall()
+        ]
+        failed = [
+            {"id": r[0], "patient_id": r[1], "patient_name": r[2], "body": r[3],
+             "delivery_error": r[4], "created_at": r[5]}
+            for r in await failure_cursor.fetchall()
+        ]
+        reminders_due = [
+            {"patient_id": r[0], "patient_name": r[1], "reminder_time": r[2]}
+            for r in await due_cursor.fetchall()
+        ]
+    return {
+        "date": today, "alerts": alerts, "appointments": appointments_today,
+        "failed_deliveries": failed, "reminders_due": reminders_due,
+        "counts": {"open_alerts": len(alerts),
+                   "unacknowledged": sum(1 for item in alerts if not item["acknowledged_at"]),
+                   "appointments": len(appointments_today), "failed_deliveries": len(failed),
+                   "reminders_due": len(reminders_due)},
+    }
 
 
 # ── Routes: reports ───────────────────────────────────────────────────────────
@@ -1213,6 +2016,11 @@ async def weekly_report():
 
 @app.websocket("/ws/{patient_id}")
 async def websocket_endpoint(websocket: WebSocket, patient_id: int):
+    async with db_store.connect() as db:
+        session = await auth.get_session(db, websocket.cookies.get(auth.COOKIE_NAME, ""))
+    if not session:
+        await websocket.close(code=4401)
+        return
     await manager.connect(patient_id, websocket)
     try:
         while True:
@@ -1223,6 +2031,11 @@ async def websocket_endpoint(websocket: WebSocket, patient_id: int):
 
 @app.websocket("/ws/global")
 async def websocket_global(websocket: WebSocket):
+    async with db_store.connect() as db:
+        session = await auth.get_session(db, websocket.cookies.get(auth.COOKIE_NAME, ""))
+    if not session:
+        await websocket.close(code=4401)
+        return
     await manager.connect(-1, websocket)
     try:
         while True:
@@ -1238,17 +2051,33 @@ async def health():
     """Liveness check that also reports what's actually wired up — the fastest
     way to tell whether a tunnel reaches this process and whether WhatsApp and
     speech are configured, without sending a real message."""
+    database_reachable = False
+    if not DB_ERROR:
+        try:
+            async with db_store.connect() as db:
+                database_reachable = bool(await (await db.execute("SELECT 1")).fetchone())
+        except Exception:
+            database_reachable = False
     return {
-        "status": "degraded" if DB_ERROR else "ok",
+        "status": "degraded" if DB_ERROR or missing_production_config() or not database_reachable else "ok",
         "service": "VeloxaCare API",
+        "environment": environment(),
+        "demo_enabled": demo_tools_enabled(),
+        "missing_production_config": missing_production_config(),
         "whatsapp_configured": whatsapp.is_configured(),
         "whatsapp_welcome_template_configured": bool(os.getenv("META_WELCOME_TEMPLATE", "").strip()),
         "stt_providers": stt.configured_providers(),
         "webhook": "/webhook/whatsapp",
         # Which store is in use, and why it isn't working if it isn't. Without
         # this a storage misconfiguration is invisible until a query fails.
-        "database": "turso" if db_store.turso_configured() else f"sqlite:{DB_PATH}",
-        "database_error": DB_ERROR,
+        "database": (
+            "supabase-postgres" if db_store.postgres_configured()
+            else "turso" if db_store.turso_configured()
+            else f"sqlite:{DB_PATH}"
+        ),
+        "database_reachable": database_reachable,
+        "database_error": bool(DB_ERROR),
+        "database_error_detail": DB_ERROR if DB_ERROR and not production_like() else None,
     }
 
 

@@ -100,6 +100,24 @@ META_WELCOME_TEMPLATE=veloxacare_welcome
 META_WELCOME_TEMPLATE_LANGUAGE=en_US
 ```
 
+### Create the medication reminder template
+
+Create and approve a **Utility → Default** template named
+`veloxacare_medication_reminder` with three body variables and this body:
+
+```text
+Hello {{1}}! 💊 It is time to take your {{2}} ({{3}}). Reply YES when done, or NO if you missed it.
+```
+
+Use realistic review samples in this order: patient first name (`Ama`), medicine
+(`Amlodipine`), and dosage (`5mg once daily`). After Meta approves the template,
+set:
+
+```bash
+META_MEDICATION_REMINDER_TEMPLATE=veloxacare_medication_reminder
+META_MEDICATION_REMINDER_TEMPLATE_LANGUAGE=en_US
+```
+
 The Add Patient result now reports the real outcome. “Meta accepted” means the
 API call succeeded; the conversation changes to `sent`, `delivered`, `read` or
 `failed` when Meta posts its status receipt. A welcome shown as **Not sent** was
@@ -214,4 +232,4 @@ real message and may trigger a real escalation, so use a test patient.
 | Verified but silent | `messages` field not subscribed |
 | 403 in your logs | `META_APP_SECRET` mismatch — signature check rejecting |
 | Reply never sends | Token expired, or recipient not on a test number's allow-list |
-| Works, then forgets everything | `TURSO_DATABASE_URL` unset — see [DEPLOY.md](DEPLOY.md) |
+| Works, then forgets everything | `DATABASE_URL` unset — see [DEPLOY.md](DEPLOY.md) |

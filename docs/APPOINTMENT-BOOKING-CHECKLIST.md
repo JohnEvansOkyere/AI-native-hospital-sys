@@ -34,7 +34,7 @@ appointment becomes an operational record for the care team.
 
 ## Safety and reliability
 
-- [x] Store appointments through `db.connect()` for SQLite and Turso compatibility.
+- [x] Store appointments through `db.connect()` for SQLite and PostgreSQL compatibility.
 - [x] Add the schema with `CREATE TABLE/INDEX IF NOT EXISTS` for live demo databases.
 - [x] Prevent two confirmed appointments for one clinician/date/time.
 - [x] Reject weekends, past dates and unsupported clinic times.

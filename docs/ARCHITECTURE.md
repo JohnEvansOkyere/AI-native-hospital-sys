@@ -33,9 +33,9 @@ clinic, and surfaces the ones who are slipping — *and why* — to the care tea
          ▼                        ▼
  ┌──────────────┐        ┌──────────────────┐
  │  Database    │        │  Groq (ai.py)    │
- │  SQLite now  │        │  • reason detect │
- │  Turso prod  │        │    (Llama 3.1)   │
- │  in prod     │        │  • weekly report │
+ │  SQLite dev  │        │  • reason detect │
+ │  Supabase    │        │    (Llama 3.1)   │
+ │  PostgreSQL  │        │  • weekly report │
  └──────────────┘        │    (Llama 3.3)   │
          │               │  • BP risk =     │
          ▼               │    RULE-BASED    │

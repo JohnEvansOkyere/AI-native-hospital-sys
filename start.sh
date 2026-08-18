@@ -25,11 +25,6 @@ fi
 source .venv/bin/activate
 pip install -q -r requirements-local.txt
 
-# Copy .env if not present
-if [ -f "$ROOT/.env" ]; then
-  cp "$ROOT/.env" "$ROOT/backend/.env"
-fi
-
 echo "  → Starting API server on http://localhost:8000"
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
 API_PID=$!

@@ -22,7 +22,7 @@ from jiwer import wer as jiwer_wer
 # Read keys from the repo-root .env, same file the app uses — no exports needed.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from stt_providers import build_providers  # noqa: E402
+from stt_providers import LanguageNotSupported, build_providers  # noqa: E402
 
 BENCH_DIR = Path(__file__).parent
 SCENARIOS_CSV = BENCH_DIR / "recording" / "scenarios.csv"
@@ -192,6 +192,15 @@ def main():
             try:
                 hyp = provider.transcribe(str(audio_path), language=lang)
                 error = ""
+            except LanguageNotSupported as e:
+                # The provider has no model for this pair, so there is nothing to
+                # score. Recording it as WER 1.0 would punish a Ghanaian-language
+                # specialist for the 30 English and Pidgin clips it never claimed
+                # — the difference between "absent from that slice" and "scored
+                # zero on it" is the difference between an honest table and a
+                # misleading one.
+                print(f"  skipped ({e})")
+                continue
             except Exception as e:
                 hyp, error = "", f"{type(e).__name__}: {e}"
                 print(f"  ERROR {error}")

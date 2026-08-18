@@ -73,7 +73,7 @@ appointments, handles refills, and answers by voice when addressed by voice.
 
 ## 7. Technical overview (247 words — field allows ~250)
 
-FastAPI + SQLite/Turso backend, React dashboard live over WebSockets, Meta
+FastAPI + SQLite/Supabase PostgreSQL backend, React dashboard live over WebSockets, Meta
 WhatsApp Cloud API transport, Groq models for classification and summarisation.
 Four architecture decisions carried real tradeoffs.
 
@@ -256,7 +256,7 @@ Provenance is recorded per message (`stt_provider`, `stt_language`,
 
 ## 7. Technical overview
 
-- **Backend** FastAPI + SQLite (Turso/libSQL in production); one inbound choke
+- **Backend** FastAPI + SQLite locally (Supabase PostgreSQL in production); one inbound choke
   point, `ingest_patient_message()`, that every channel calls
 - **Speech-to-text** a channel-blind provider layer: Intron Sahara → Cartesia Ink
   → OpenAI Whisper → local faster-whisper, with automatic fallback

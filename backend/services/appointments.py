@@ -8,7 +8,7 @@ handled here against the shared database.
 import re
 from datetime import date, datetime, timedelta
 
-from db import Connection
+from db import Connection, insert_returning_id
 
 
 MORNING_SLOTS = ("09:00", "10:00", "11:00")
@@ -232,7 +232,8 @@ async def create_appointment(
     clinician_name: str, visit_type: str,
 ) -> dict:
     now = datetime.now().isoformat()
-    cursor = await db.execute(
+    appointment_id = await insert_returning_id(
+        db,
         """INSERT INTO appointments
            (patient_id, appointment_date, appointment_time, clinician_name, visit_type,
             status, created_at, updated_at)
@@ -240,7 +241,7 @@ async def create_appointment(
         (patient_id, appointment_date, appointment_time, clinician_name, visit_type, now, now),
     )
     await db.commit()
-    return await get_appointment(db, cursor.lastrowid)
+    return await get_appointment(db, appointment_id)
 
 
 async def reschedule_appointment(
