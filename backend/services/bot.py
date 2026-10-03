@@ -56,10 +56,20 @@ async def _build_context(patient_id: int, db: Connection,
     bp_row = await cursor.fetchone()
     last_bp = bp_row[0] if bp_row else None
 
+    # Staff-entered care plan plus patient-reported context. The latter is
+    # intentionally labelled as unverified in the AI instructions.
+    cursor = await db.execute(
+        "SELECT care_instructions, patient_context FROM patients WHERE id=?",
+        (patient_id,),
+    )
+    profile = await cursor.fetchone()
+
     facts = {
         "name": name, "condition": condition, "drug_name": drug_name,
         "drug_dosage": drug_dosage, "adherence_pct": adherence_pct,
         "streak": streak, "last_bp": last_bp,
+        "care_plan": profile[0] or "" if profile else "",
+        "patient_context": profile[1] or "" if profile else "",
     }
 
     # Recent conversation (oldest→newest), includes the just-logged inbound as last turn

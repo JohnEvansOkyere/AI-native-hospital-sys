@@ -615,6 +615,11 @@ class PatientCommunicationRequest(BaseModel):
     paused: Optional[bool] = None
 
 
+class PatientProfileRequest(BaseModel):
+    care_instructions: str
+    patient_context: str = ""
+
+
 @app.post("/api/patients")
 async def enroll_patient(body: EnrollRequest, request: Request):
     require_admin(request)
@@ -798,6 +803,37 @@ async def update_patient_communication(
         await record_audit(
             db, request.state.staff, "patient.communication_updated", "patient", patient_id,
             body.model_dump(exclude_none=True),
+        )
+        await db.commit()
+        patient = await get_patient_full(patient_id, db)
+    await manager.broadcast_all({"type": "patient_updated", "patient": patient})
+    return patient
+
+
+@app.patch("/api/patients/{patient_id}/profile")
+async def update_patient_profile(
+    patient_id: int, body: PatientProfileRequest, request: Request,
+):
+    staff = request.state.staff
+    care_instructions = body.care_instructions.strip()
+    patient_context = body.patient_context.strip()
+    if len(care_instructions) > 2000 or len(patient_context) > 1000:
+        raise HTTPException(status_code=400, detail="Care plan or patient context is too long")
+    now = datetime.now().isoformat()
+    async with db_store.connect() as db:
+        cursor = await db.execute("SELECT id FROM patients WHERE id=?", (patient_id,))
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Patient not found")
+        await db.execute(
+            """UPDATE patients SET care_instructions=?, patient_context=?,
+                      profile_updated_at=?, profile_updated_by=? WHERE id=?""",
+            (care_instructions, patient_context, now, staff["name"], patient_id),
+        )
+        # Record that the profile changed without duplicating sensitive note text
+        # into the audit log.
+        await record_audit(
+            db, staff, "patient.profile_updated", "patient", patient_id,
+            {"fields": ["care_instructions", "patient_context"]},
         )
         await db.commit()
         patient = await get_patient_full(patient_id, db)

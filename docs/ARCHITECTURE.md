@@ -65,7 +65,7 @@ SQLite tables (see [backend/db.py](../backend/db.py)). Maps 1:1 to Postgres/Supa
 
 | Table | Purpose |
 |---|---|
-| `patients` | Profile, condition, drug, assigned doctor, current `risk_level` |
+| `patients` | Profile, condition, drug, assigned doctor, care instructions, patient-reported context and current `risk_level` |
 | `messages` | Full WhatsApp transcript (inbound/outbound, optional `reason` tag) |
 | `adherence_logs` | One row per day per patient: `yes` / `cost` / `forgot` / … |
 | `checkin_logs` | BP (or other) readings with computed `risk_level` + AI note |
@@ -133,6 +133,7 @@ LLM call. Override the defaults with `GROQ_FAST_MODEL` and `GROQ_REPORT_MODEL`.
 | GET | `/api/patients` | All active patients with computed adherence, streak, escalations |
 | GET | `/api/patients/{id}` | One patient, full detail |
 | POST | `/api/patients` | Enroll (sends welcome message) |
+| PATCH | `/api/patients/{id}/profile` | Update staff care instructions and patient-reported context |
 | GET | `/api/patients/{id}/messages` | Transcript |
 | POST | `/api/patients/{id}/messages` | **Inbound message → bot reply** (core loop) |
 | POST | `/api/patients/{id}/remind` | Fire medication reminder |
