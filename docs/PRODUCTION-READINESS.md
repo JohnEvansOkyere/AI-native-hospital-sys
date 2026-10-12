@@ -36,7 +36,7 @@ signed off by a supervising clinician, not just by engineering.
 
 ### Patients must never get silence
 
-- [ ] **P0-2 Answer the webhook quickly and do the work durably.** The WhatsApp
+- [x] **P0-2 Answer the webhook quickly and do the work durably.** *Done 12 Oct 2026: messages are stored in `inbound_events` and processed after the response, with a per-minute sweep (`/api/cron/inbound`) for missed or killed runs, a 120-second budget per message, at most 3 attempts, and no reprocessing of a half-finished message. See `PRODUCTION-PILOT.md`. The Groq timeouts move to the switch to Claude.* The WhatsApp
   webhook does media download, speech-to-text, Groq, translation, text-to-speech
   and sending before it returns. Added up, the worst-case timeouts come to more
   than 1,000 seconds, against a Vercel function limit of about 300 seconds.
@@ -48,7 +48,7 @@ signed off by a supervising clinician, not just by engineering.
     `inbound_events` would all work. Give Groq an explicit `timeout` and
     `max_retries`, and cap the total time spent across the speech-to-text
     providers.
-- [~] **P0-3 Fallback reply and staff alert whenever processing fails.** *Mostly done 12 Oct 2026: on any processing error the patient gets a fixed reply with 112/193, and a red case is opened for the care team (`_handle_processing_failure`, with a test). Still open: retrying failed events and showing events stuck in `processing` (a killed function), which belong with P0-2.*
+- [x] **P0-3 Fallback reply and staff alert whenever processing fails.** *Done 12 Oct 2026: on any processing error the patient gets a fixed reply with 112/193, and a red case is opened for the care team (`_handle_processing_failure`, with a test). Stuck and killed events are now recovered by the inbound sweep (P0-2).*
   - Today any exception in `ingest_patient_message` is logged, and the event is
     marked `failed` and returned 200, so Meta never retries.
   - The inbound row is already committed by then. An emergency message can

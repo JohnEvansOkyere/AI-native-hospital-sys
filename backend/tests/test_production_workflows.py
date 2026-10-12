@@ -1,5 +1,6 @@
 """High-value boundary tests for the clinic pilot workflow."""
 
+import json
 import os
 import sys
 import tempfile
@@ -32,7 +33,7 @@ os.environ.update({
 
 import db  # noqa: E402
 import main as main_module  # noqa: E402
-from main import app, _claim_whatsapp_event, _finish_whatsapp_event  # noqa: E402
+from main import app, _enqueue_whatsapp_message  # noqa: E402
 from config import demo_tools_enabled  # noqa: E402
 from services import whatsapp  # noqa: E402
 
@@ -165,10 +166,10 @@ def test_cron_rejects_missing_secret(client: TestClient):
 
 
 def test_whatsapp_idempotency_survives_process_memory(client: TestClient):
-    message_id = "wamid.durable-test"
-    assert asyncio.run(_claim_whatsapp_event(message_id))
-    asyncio.run(_finish_whatsapp_event(message_id))
-    assert not asyncio.run(_claim_whatsapp_event(message_id))
+    message = {"id": "wamid.durable-test", "from": "233000000000", "type": "text",
+               "text": {"body": "hello"}}
+    assert asyncio.run(_enqueue_whatsapp_message(message)) == "wamid.durable-test"
+    assert asyncio.run(_enqueue_whatsapp_message(message)) == ""
 
 
 def test_cron_records_a_durable_failed_dispatch(staff):
@@ -322,3 +323,94 @@ async def _latest_reading(patient_id: int) -> str:
             (patient_id,),
         )).fetchone()
     return row[0] if row else ""
+
+
+def _webhook_body(message: dict) -> dict:
+    return {"entry": [{"changes": [{"value": {"messages": [message]}}]}]}
+
+
+def _signed_webhook(client: TestClient, message: dict):
+    import hashlib
+    import hmac
+    raw = json.dumps(_webhook_body(message)).encode()
+    signature = hmac.new(b"test-app-secret", raw, hashlib.sha256).hexdigest()
+    return client.post("/webhook/whatsapp", content=raw, headers={
+        "Content-Type": "application/json", "X-Hub-Signature-256": f"sha256={signature}",
+    })
+
+
+async def _inbound_event(message_id: str) -> tuple:
+    async with db.connect() as conn:
+        return await (await conn.execute(
+            "SELECT status, attempts FROM inbound_events WHERE external_message_id=?", (message_id,),
+        )).fetchone()
+
+
+def test_webhook_queues_then_processes_after_responding(staff, monkeypatch):
+    client = staff["client"]
+    patient = client.get("/api/patients").json()[0]
+    sent: list[str] = []
+
+    async def fake_send_text(to: str, body: str) -> bool:
+        sent.append(body)
+        return True
+
+    monkeypatch.setattr(whatsapp, "send_text", fake_send_text)
+    message = {"id": "wamid.queue-test", "from": whatsapp.normalize_phone(patient["phone"]),
+               "type": "text", "text": {"body": "my reading is 128/82"}}
+
+    monkeypatch.setenv("META_APP_SECRET", "test-app-secret")
+    response = _signed_webhook(client, message)
+    assert response.status_code == 200
+    assert response.json()["queued"] == 1
+    # TestClient runs background tasks before returning, as the server does
+    # after sending the response.
+    assert asyncio.run(_inbound_event("wamid.queue-test")) == ("processed", 1)
+    assert any("128/82" in body for body in sent)
+
+    retry = _signed_webhook(client, message)
+    assert retry.json()["duplicates"] == 1
+
+
+def test_sweep_never_reprocesses_a_half_finished_message(staff, monkeypatch):
+    client = staff["client"]
+    patient = client.get("/api/patients").json()[0]
+    sent: list[str] = []
+
+    async def fake_send_text(to: str, body: str) -> bool:
+        sent.append(body)
+        return True
+
+    monkeypatch.setattr(whatsapp, "send_text", fake_send_text)
+    message_id = "wamid.killed-mid-run"
+    message = {"id": message_id, "from": whatsapp.normalize_phone(patient["phone"]),
+               "type": "text", "text": {"body": "I could not afford my pills"}}
+
+    async def simulate_killed_run():
+        long_ago = "2000-01-01T00:00:00"
+        async with db.connect() as conn:
+            await conn.execute(
+                """INSERT INTO inbound_events
+                   (external_message_id, status, received_at, payload, attempts, started_at)
+                   VALUES (?, 'processing', ?, ?, 1, ?)""",
+                (message_id, long_ago, json.dumps(message), long_ago),
+            )
+            await conn.execute(
+                """INSERT INTO messages (patient_id, direction, body, created_at, channel, external_message_id)
+                   VALUES (?, 'inbound', ?, ?, 'whatsapp', ?)""",
+                (patient["id"], "I could not afford my pills", long_ago, message_id),
+            )
+            await conn.commit()
+
+    asyncio.run(simulate_killed_run())
+    sweep = client.get("/api/cron/inbound", headers={"Authorization": "Bearer test-cron-secret"})
+
+    assert sweep.status_code == 200
+    assert "abandoned" in sweep.json()["results"]
+    assert asyncio.run(_inbound_event(message_id))[0] == "failed"
+    assert len(sent) == 1 and "112" in sent[0]
+    _open_case_for(client, patient["id"], lambda a: a["details"].get("reason") == "processing_failed")
+
+
+def test_inbound_sweep_requires_cron_secret(client: TestClient):
+    assert client.get("/api/cron/inbound").status_code == 401
