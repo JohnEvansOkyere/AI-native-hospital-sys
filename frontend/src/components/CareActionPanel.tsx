@@ -189,7 +189,7 @@ export function CareActionPanel({
               <h3 className="text-sm font-semibold text-slate-800">Contact the patient</h3>
             </div>
             <p className="text-xs text-slate-500 mb-3 ml-7">
-              Edit the approved care-team message before sending. A configured clinic sends on WhatsApp; demo mode records the same action safely.
+              Review and edit the care-team message before sending. The delivery result will be recorded in the patient timeline.
             </p>
             <textarea value={message} onChange={event => setMessage(event.target.value)} rows={5}
               className="w-full resize-none rounded-xl border border-slate-200 p-3 text-sm text-slate-700 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"

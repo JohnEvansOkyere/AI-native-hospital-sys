@@ -34,43 +34,36 @@ export function CareOverview({ patients, alerts, onOpenAlert }: Props) {
   })[0]
 
   const cards = [
-    { label: 'Urgent now', value: urgent, detail: 'red cases open', icon: AlertTriangle, tone: 'text-red-600 bg-red-50' },
-    { label: 'Medicine access', value: medicineAccess, detail: 'cost or refill cases', icon: Wallet, tone: 'text-violet-600 bg-violet-50' },
-    { label: 'Below care target', value: belowTarget, detail: 'under 75% completion', icon: HeartHandshake, tone: 'text-amber-600 bg-amber-50' },
-    { label: 'Handled today', value: handledToday, detail: 'outcomes recorded', icon: CheckCircle2, tone: 'text-emerald-600 bg-emerald-50' },
+    { label: 'Urgent cases', value: urgent, detail: 'Open red risk alerts', icon: AlertTriangle, tone: 'text-red-700 bg-red-50', edge: 'border-t-red-500' },
+    { label: 'Medicine access', value: medicineAccess, detail: 'Cost or refill barriers', icon: Wallet, tone: 'text-violet-700 bg-violet-50', edge: 'border-t-violet-500' },
+    { label: 'Follow-up needed', value: belowTarget, detail: 'Care completion below 75%', icon: HeartHandshake, tone: 'text-amber-700 bg-amber-50', edge: 'border-t-amber-500' },
+    { label: 'Resolved today', value: handledToday, detail: 'Outcomes recorded', icon: CheckCircle2, tone: 'text-emerald-700 bg-emerald-50', edge: 'border-t-emerald-600' },
   ]
 
   return (
-    <div className="px-3 pt-3 flex-shrink-0">
-      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm px-4 py-3 flex items-center gap-4">
-        <div className="hidden xl:block min-w-[170px]">
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">Care command centre</p>
-          <p className="text-sm font-semibold text-slate-900 mt-0.5">Today’s care work</p>
-          <p className="text-[11px] text-slate-400">Signals → action → outcomes</p>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 flex-1">
+    <section aria-label="Care activity summary">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           {cards.map(card => (
-            <div key={card.label} className="flex items-center gap-2 min-w-0 rounded-xl bg-slate-50/70 px-2.5 py-2">
-              <span className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${card.tone}`}>
-                <card.icon size={15} />
-              </span>
-              <div className="min-w-0">
-                <p className="text-base font-bold text-slate-900 leading-none">{card.value}</p>
-                <p className="text-[10px] font-semibold text-slate-600 truncate mt-1">{card.label}</p>
-                <p className="text-[9px] text-slate-400 truncate">{card.detail}</p>
+            <div key={card.label} className={`min-w-0 rounded-xl border border-slate-200 border-t-2 ${card.edge} bg-white p-3 shadow-sm sm:p-4`}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-medium text-slate-500">{card.label}</p>
+                  <p className="mt-2 text-2xl font-semibold leading-none tracking-tight text-slate-900">{card.value}</p>
+                </div>
+                <span className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg ${card.tone}`}>
+                  <card.icon size={17} />
+                </span>
               </div>
+              <p className="mt-3 truncate text-[11px] text-slate-500">{card.detail}</p>
             </div>
           ))}
-        </div>
-
-        {next && (
-          <button onClick={() => onOpenAlert(next)}
-            className="hidden lg:inline-flex items-center gap-2 rounded-xl bg-slate-900 text-white px-3 py-2 text-xs font-semibold hover:bg-slate-800 transition flex-shrink-0">
-            Work next case <ArrowRight size={13} />
-          </button>
-        )}
       </div>
-    </div>
+      {next && (
+        <button onClick={() => onOpenAlert(next)}
+          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+          Open highest priority case <ArrowRight size={13} />
+        </button>
+      )}
+    </section>
   )
 }

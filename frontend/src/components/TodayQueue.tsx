@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, CalendarClock, CircleAlert, RefreshCw, Send } from 'lucide-react'
+import { AlertTriangle, Bell, CalendarClock, CircleAlert, RefreshCw, Send } from 'lucide-react'
 import { api, Escalation, TodayWorklist } from '../api/client'
 
 type Props = {
@@ -15,7 +15,11 @@ export function TodayQueue({ refreshKey, onOpenAlert, onSelectPatient }: Props) 
   useEffect(() => {
     let active = true
     api.getTodayWorklist()
-      .then(data => active && setWorklist(data))
+      .then(data => {
+        if (!active) return
+        setWorklist(data)
+        setError('')
+      })
       .catch(reason => active && setError(reason instanceof Error ? reason.message : 'Queue unavailable'))
     return () => { active = false }
   }, [refreshKey])
@@ -24,26 +28,31 @@ export function TodayQueue({ refreshKey, onOpenAlert, onSelectPatient }: Props) 
   if (!worklist) return <div className="mx-3 mt-3 flex items-center gap-2 text-xs text-slate-400"><RefreshCw size={13} className="animate-spin" /> Loading today’s queue…</div>
 
   const cards = [
-    { label: 'Unacknowledged', value: worklist.counts.unacknowledged, icon: CircleAlert, tone: 'text-red-700 bg-red-50' },
+    { label: 'Awaiting owner', value: worklist.counts.unacknowledged, icon: CircleAlert, tone: 'text-red-700 bg-red-50' },
     { label: 'Appointments', value: worklist.counts.appointments, icon: CalendarClock, tone: 'text-blue-700 bg-blue-50' },
-    { label: 'Delivery failures', value: worklist.counts.failed_deliveries, icon: Send, tone: 'text-amber-700 bg-amber-50' },
+    { label: 'Reminders due', value: worklist.counts.reminders_due, icon: Bell, tone: 'text-violet-700 bg-violet-50' },
+    { label: 'Failed messages', value: worklist.counts.failed_deliveries, icon: Send, tone: 'text-amber-700 bg-amber-50' },
   ]
 
   return (
-    <section className="mx-3 mt-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm" aria-label="Today's care queue">
-      <div className="mb-3 flex items-center justify-between">
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Today's care queue">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold text-slate-900">Today</h2>
-          <p className="text-[11px] text-slate-500">Work that needs a person—not another dashboard metric.</p>
+          <h2 className="text-sm font-semibold text-slate-900">Today’s operations</h2>
+          <p className="mt-0.5 text-xs text-slate-500">Scheduled care and work that needs staff attention.</p>
         </div>
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{worklist.date}</span>
+        <span className="flex-shrink-0 text-[11px] font-medium text-slate-500">{worklist.date}</span>
       </div>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {cards.map(card => (
-          <div key={card.label} className={`rounded-xl px-3 py-2 ${card.tone}`}>
-            <card.icon size={14} aria-hidden="true" />
-            <p className="mt-1 text-xl font-bold">{card.value}</p>
-            <p className="text-[10px] font-semibold">{card.label}</p>
+          <div key={card.label} className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2">
+            <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md ${card.tone}`}>
+              <card.icon size={15} aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-lg font-semibold leading-none text-slate-900">{card.value}</p>
+              <p className="mt-1 truncate text-[10px] font-medium text-slate-500">{card.label}</p>
+            </div>
           </div>
         ))}
       </div>

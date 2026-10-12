@@ -110,8 +110,8 @@ export function AppointmentsPanel({ appointments, onOpenPatient, onUpdate }: Pro
             <div className="py-16 text-center px-6">
               <CalendarClock size={34} className="mx-auto text-slate-300" />
               <p className="mt-3 font-semibold text-slate-600">No appointments in this view</p>
-              <p className="text-sm text-slate-400 mt-1">
-                In Demo, send: “Please book me an appointment for Tuesday morning.”
+              <p className="mt-1 text-sm text-slate-400">
+                Patient bookings will appear here when they are made.
               </p>
             </div>
           ) : (

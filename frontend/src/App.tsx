@@ -7,6 +7,7 @@ import { CareActionPanel } from './components/CareActionPanel'
 import { AppointmentsPanel } from './components/AppointmentsPanel'
 import { LoginScreen } from './components/LoginScreen'
 import { AdminSettings } from './components/AdminSettings'
+import { WorkspaceShell, WorkspaceView } from './components/WorkspaceShell'
 import ReactMarkdown from 'react-markdown'
 import {
   Activity, AlertTriangle, Bell, CalendarDays, CheckCircle, ChevronRight,
@@ -1067,6 +1068,7 @@ function ReportModal({ onClose }: { onClose: () => void }) {
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
+  const [sessionCheckFailed, setSessionCheckFailed] = useState(false)
   const [patients, setPatients] = useState<Patient[]>([])
   const [alerts, setAlerts] = useState<Escalation[]>([])
   const [appointments, setAppointments] = useState<Appointment[]>([])
@@ -1076,9 +1078,10 @@ export default function App() {
   const [showReport, setShowReport] = useState(false)
   const [activeAlert, setActiveAlert] = useState<Escalation | null>(null)
   const [loading, setLoading] = useState(true)
+  const [dataError, setDataError] = useState('')
   // Overview and conversations are deliberately separate product surfaces:
   // one helps staff prioritise work, the other gives patient chat room to breathe.
-  const [view, setView] = useState<'clinic' | 'conversations' | 'appointments' | 'settings' | 'demo'>('clinic')
+  const [view, setView] = useState<WorkspaceView>('clinic')
   // Bumped whenever a message lands, so the open patient timeline refetches.
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -1091,21 +1094,34 @@ export default function App() {
       setAlerts(as)
       setAppointments(aps)
       setClinicName(clinic.clinic_name)
-      if (!selectedId && ps.length > 0) setSelectedId(ps[0].id)
-      setLoading(false)
+      if (ps.length > 0) setSelectedId(current => current ?? ps[0].id)
+      setDataError('')
     } catch (reason) {
       if (reason instanceof AuthenticationRequired) setSession(null)
-      else throw reason
+      else setDataError('Clinic data could not be loaded. Check the connection and try again.')
+    } finally {
+      setLoading(false)
     }
-  }, [selectedId])
-
-  useEffect(() => {
-    api.me().then(setSession).catch(() => setSession(null)).finally(() => setCheckingSession(false))
   }, [])
 
+  const checkSession = useCallback(async () => {
+    setCheckingSession(true)
+    setSessionCheckFailed(false)
+    try {
+      setSession(await api.me())
+    } catch (reason) {
+      setSession(null)
+      setSessionCheckFailed(!(reason instanceof AuthenticationRequired))
+    } finally {
+      setCheckingSession(false)
+    }
+  }, [])
+
+  useEffect(() => { void checkSession() }, [checkSession])
+
   useEffect(() => {
-    if (session) loadData()
-  }, [session])
+    if (session) void loadData()
+  }, [session, loadData])
 
   // Global WebSocket for cross-patient events
   useLiveSocket('/ws/-1', useCallback((data: any) => {
@@ -1155,13 +1171,7 @@ export default function App() {
 
   const selected = patients.find(p => p.id === selectedId) || null
 
-  const stats = {
-    total: patients.length,
-    green: patients.filter(p => p.risk_level === 'green').length,
-    amber: patients.filter(p => p.risk_level === 'amber').length,
-    red: patients.filter(p => p.risk_level === 'red').length,
-    avgCareCompletion: patients.length ? Math.round(patients.reduce((s, p) => s + p.care_completion_pct, 0) / patients.length) : 0,
-  }
+  const totalPatients = patients.length
 
   const handlePatientUpdate = useCallback(() => {
     if (selectedId) {
@@ -1209,8 +1219,25 @@ export default function App() {
     </div>
   )
 
+  if (!session && sessionCheckFailed) return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-5">
+      <section className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-7 text-center shadow-sm" role="alert">
+        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+          <Activity size={22} />
+        </span>
+        <h1 className="mt-4 text-lg font-semibold text-slate-900">Workspace unavailable</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-500">VeloxaCare could not confirm your session. Check your connection and try again.</p>
+        <button onClick={() => void checkSession()}
+          className="mt-5 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">
+          <RefreshCw size={15} /> Try again
+        </button>
+      </section>
+    </div>
+  )
+
   if (!session) return <LoginScreen onSignedIn={(next) => {
     setSession(next)
+    setSessionCheckFailed(false)
     setLoading(true)
   }} />
 
@@ -1224,111 +1251,29 @@ export default function App() {
   )
 
   return (
-    <div className="h-screen flex flex-col bg-slate-50 overflow-hidden">
-      {/* Top nav */}
-      <header className="bg-white border-b border-slate-100 px-6 py-3 flex items-center justify-between flex-shrink-0 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center">
-            <Heart size={16} className="text-white" />
-          </div>
-          <div>
-            <span className="font-bold text-slate-800 text-lg">VeloxaCare</span>
-            <span className="hidden 2xl:inline text-xs text-slate-400 ml-2">{clinicName}</span>
-          </div>
-        </div>
+    <WorkspaceShell
+      view={view}
+      onNavigate={setView}
+      clinicName={clinicName}
+      user={session.user}
+      demoEnabled={session.demo_enabled}
+      alertCount={alerts.length}
+      onWeeklyReport={() => setShowReport(true)}
+      onAddPatient={() => setShowEnroll(true)}
+      onSignOut={async () => { await api.logout(); setSession(null) }}
+    >
 
-        {/* Stats bar */}
-        <div className="hidden 2xl:flex items-center gap-6">
-          <div className="flex items-center gap-2 text-sm">
-            <div className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="text-slate-600 font-medium">{stats.green}</span>
-              <span className="text-slate-400">on track</span>
-            </div>
-            <div className="flex items-center gap-1 ml-3">
-              <span className="w-2 h-2 rounded-full bg-amber-500" />
-              <span className="text-slate-600 font-medium">{stats.amber}</span>
-              <span className="text-slate-400">watch</span>
-            </div>
-            <div className="flex items-center gap-1 ml-3">
-              <span className="w-2 h-2 rounded-full bg-red-500" />
-              <span className="text-slate-600 font-medium">{stats.red}</span>
-              <span className="text-slate-400">urgent</span>
-            </div>
-          </div>
-          <div className="h-6 w-px bg-slate-200" />
-          <div className="text-sm">
-            <span className="font-bold text-emerald-600">{stats.avgCareCompletion}%</span>
-            <span className="text-slate-400 ml-1">avg care completion</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {alerts.length > 0 && (
-            <div className="flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold px-3 py-1.5 rounded-full">
-              <Bell size={12} />
-              {alerts.length} alert{alerts.length !== 1 ? 's' : ''}
-            </div>
-          )}
-
-          {/* Product pages; Demo remains a simulator fallback only. */}
-          <div className="flex rounded-xl border border-slate-200 overflow-hidden text-sm">
-            <button onClick={() => setView('clinic')}
-              aria-current={view === 'clinic' ? 'page' : undefined}
-              className={`px-3 py-2 font-medium transition ${
-                view === 'clinic' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-              Overview
-            </button>
-            <button onClick={() => setView('conversations')}
-              aria-current={view === 'conversations' ? 'page' : undefined}
-              className={`px-3 py-2 font-medium transition inline-flex items-center gap-1.5 ${
-                view === 'conversations' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-              <MessageCircle size={13} /> Conversations
-            </button>
-            <button onClick={() => setView('appointments')}
-              aria-current={view === 'appointments' ? 'page' : undefined}
-              className={`px-3 py-2 font-medium transition inline-flex items-center gap-1.5 ${
-                view === 'appointments' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-              <CalendarDays size={13} /> Appointments
-            </button>
-            {session.demo_enabled && (
-              <button onClick={() => setView('demo')}
-                aria-current={view === 'demo' ? 'page' : undefined}
-                title="WhatsApp simulator — same backend path, for demos without the live webhook"
-                className={`px-3 py-2 font-medium transition ${
-                  view === 'demo' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-                Demo
-              </button>
-            )}
-            {session.user.role === 'admin' && (
-              <button onClick={() => setView('settings')}
-                aria-current={view === 'settings' ? 'page' : undefined}
-                className={`px-3 py-2 font-medium transition inline-flex items-center gap-1.5 ${
-                  view === 'settings' ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-                <Settings size={13} /> Settings
-              </button>
-            )}
-          </div>
-
-          <button onClick={() => setShowReport(true)}
-            className="flex items-center gap-2 bg-emerald-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-emerald-700 transition font-medium">
-            <FileText size={14} /> Weekly Report
-          </button>
-          {session.user.role === 'admin' && (
-            <button onClick={() => setShowEnroll(true)}
-              className="flex items-center gap-2 bg-slate-800 text-white text-sm px-4 py-2 rounded-xl hover:bg-slate-900 transition font-medium">
-                <Plus size={14} /> Add Patient
-            </button>
-          )}
-          <button onClick={async () => { await api.logout(); setSession(null) }}
-            title={`Sign out ${session.user.name}`}
-            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">
-            <LogOut size={14} /><span className="hidden xl:inline">{session.user.name}</span>
+      {dataError && (
+        <div role="alert" className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:mx-6 lg:mx-8">
+          <span>{dataError}</span>
+          <button onClick={() => { setRefreshKey(key => key + 1); void loadData() }}
+            className="inline-flex items-center gap-2 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <RefreshCw size={13} /> Retry
           </button>
         </div>
-      </header>
+      )}
 
-      {/* Main layout */}
+      {/* Main workspace */}
       {view === 'clinic' ? (
         <ClinicDashboard
           patients={patients}
@@ -1361,7 +1306,7 @@ export default function App() {
           <div className="w-72 flex-shrink-0 bg-white border-r border-slate-100 flex flex-col overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100">
               <h2 className="font-semibold text-sm text-slate-700 flex items-center gap-2">
-                <User size={14} /> {stats.total} Patients
+                <User size={14} /> {totalPatients} Patients
               </h2>
             </div>
             <div className="flex-1 overflow-y-auto">
@@ -1438,6 +1383,6 @@ export default function App() {
           }}
         />
       )}
-    </div>
+    </WorkspaceShell>
   )
 }

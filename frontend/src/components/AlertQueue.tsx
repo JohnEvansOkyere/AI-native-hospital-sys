@@ -59,8 +59,8 @@ export function AlertQueue({ alerts, onOpenAlert, onSelectPatient }: Props) {
         {ordered.length === 0 ? (
           <div className="p-8 text-center">
             <Check size={28} className="text-emerald-400 mx-auto mb-2" />
-            <p className="text-sm text-slate-500 font-medium">No open alerts</p>
-            <p className="text-xs text-slate-400 mt-1">Every patient is on track.</p>
+            <p className="text-sm font-medium text-slate-600">No open care cases</p>
+            <p className="mt-1 text-xs text-slate-400">New escalations will appear here for review.</p>
           </div>
         ) : (
           <ul className="divide-y divide-slate-50">
