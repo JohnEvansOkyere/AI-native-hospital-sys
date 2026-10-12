@@ -36,7 +36,9 @@ jobs:
             exit 1
           fi
       - name: Sweep inbound WhatsApp messages
-        run: curl -fsS --max-time 290 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/inbound"
+        run: |
+          curl -fsS --max-time 290 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/inbound"
       - name: Send due reminders
         if: always()
-        run: curl -fsS --max-time 290 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/hourly"
+        run: |
+          curl -fsS --max-time 290 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/hourly"
