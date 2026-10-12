@@ -8,9 +8,13 @@ from services.ai import (
     detect_reason_ai, detect_reason_rule, generate_bot_reply,
     parse_bp, assess_bp_risk, bp_band, BP_BAND_REASON, is_affirmative,
     classify_intent, generate_assistant_reply, detect_emergency,
-    wants_to_report_bp, assess_dental_concern, assess_eye_concern, display_first_name,
+    wants_to_report_bp, assess_dental_concern, assess_eye_concern, assess_general_concern,
+    display_first_name,
     generate_care_assistant_reply,
 )
+
+
+NO_WORDS = {"no", "n", "0", "nope", "nah", "no i haven't", "no i didn't"}
 
 
 def is_yes(text: str) -> bool:
@@ -267,7 +271,7 @@ async def _process_dental_message(
             "In this demo, scheduled WhatsApp reminders are not active yet—the clinic triggers the reminder from the dashboard. "
             f"Your next recorded follow-up is {next_follow_up_text}."
         )
-    elif any(word in text for word in ("appointment", "book", "schedule", "reschedule", "recall", "come back")):
+    elif any(word in text for word in ("appointment", "book", "schedule", "reschedule", "recall")):
         bot_reply = (
             f"Of course, {first}. I’ve noted that you want help with your dental appointment. "
             "The dental team will confirm the available time with you by message."
@@ -353,7 +357,7 @@ async def _process_eye_message(
         await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk, patient_id))
         bot_reply = concern_reply
         escalation_created = True
-    elif any(word in text for word in ("appointment", "book", "schedule", "reschedule", "recall", "come back")):
+    elif any(word in text for word in ("appointment", "book", "schedule", "reschedule", "recall")):
         bot_reply = f"Of course, {first}. I’ve noted your request and the eye-care team will confirm the available time by message."
     elif current_flow in ("awaiting_eye_aftercare", "awaiting_eye_checkin"):
         bot_reply = f"Thanks, {first}. Please tell us if your vision or eye feels different, or if you have another concern."
@@ -385,6 +389,9 @@ async def _process_general_message(
     first = display_first_name(name)
     text = message.lower().strip()
     new_flow = "idle"
+    risk, concern_reply = assess_general_concern(message)
+    reason = None
+    escalation_created = False
 
     if text in ("start", "begin", "hi", "hello"):
         bot_reply = f"Welcome, {first}! 👋 I’ll help with your {service_type or 'clinic follow-up'} and remind you about your next step."
@@ -398,7 +405,23 @@ async def _process_general_message(
             (patient_id, today, "general_care", "done", care_instructions, now),
         )
         bot_reply = f"✅ Thank you, {first}. I’ve recorded your care check-in. We’ll follow up again soon."
-    elif any(word in text for word in ("appointment", "book", "schedule", "reschedule", "recall", "come back")):
+    elif risk:
+        reason = "general_care_concern"
+        await db.execute(
+            "INSERT INTO care_logs (patient_id, log_date, activity, response, details, created_at) VALUES (?,?,?,?,?,?)",
+            (patient_id, today, "general_care", "concern", message, now),
+        )
+        details = json.dumps({"category": "general", "service_type": service_type, "message": message})
+        await db.execute(
+            "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
+            (patient_id, f"Follow-up concern reported: {message}", risk, details, now),
+        )
+        await db.execute(
+            "UPDATE patients SET risk_level=? WHERE id=? AND risk_level<>'red'", (risk, patient_id)
+        )
+        bot_reply = concern_reply
+        escalation_created = True
+    elif any(word in text for word in ("appointment", "book", "schedule", "reschedule", "recall")):
         bot_reply = f"Of course, {first}. I’ve noted your appointment request and the care team will confirm the available time by message."
     elif current_flow in ("awaiting_general_checkin", "awaiting_general_aftercare"):
         bot_reply = f"Thanks, {first}. Please tell us how you are doing or share any concern for the care team."
@@ -412,7 +435,7 @@ async def _process_general_message(
         (patient_id, new_flow, "{}"),
     )
     await db.commit()
-    return bot_reply, None, False
+    return bot_reply, reason, escalation_created
 
 
 async def process_message(patient_id: int, message: str, db: Connection):
@@ -491,6 +514,11 @@ async def process_message(patient_id: int, message: str, db: Connection):
             if category_reply:
                 bot_reply = category_reply
                 reason = "eye_recovery_concern"
+        if reason in ("dental_recovery_concern", "eye_recovery_concern"):
+            # The specialty wording names the right team; the emergency
+            # instruction and numbers are never dropped for it.
+            bot_reply += (" If it is severe or getting worse, go to the nearest hospital now "
+                          "or call 112 or 193.")
         details = json.dumps({
             "category": category,
             "symptoms_reported": message,
@@ -583,10 +611,22 @@ async def process_message(patient_id: int, message: str, db: Connection):
             if streak >= 7:
                 await db.execute("UPDATE patients SET risk_level='green' WHERE id=?", (patient_id,))
 
+            # "I took it, BP was 135/85" — the reading must not be dropped.
+            systolic, diastolic = parse_bp(message)
+            if systolic is not None:
+                bp_reply, escalation_created = await _record_bp_reading(
+                    patient_id, systolic, diastolic, message, db, now
+                )
+                bot_reply = f"{bot_reply} {bp_reply}"
+
         else:
             # A reminder is pending, but the reply may be an excuse OR an unrelated
             # question/appointment request. Only log a miss if it's actually about the dose.
-            intent = await classify_intent(name, message)
+            # A plain "no" to a reminder is a missed dose, model or no model.
+            if msg_lower.rstrip("!.") in NO_WORDS:
+                intent = "missed"
+            else:
+                intent = await classify_intent(name, message)
             # Cost / side-effect / out-of-stock are barriers — always flag & escalate,
             # never let them slip into casual conversation.
             if detect_reason_rule(message) in ("cost", "side_effect", "ran_out"):
@@ -643,8 +683,7 @@ async def process_message(patient_id: int, message: str, db: Connection):
             bot_reply = await generate_bot_reply(name, "awaiting_medication_ack", message, streak=streak + 1)
         else:
             # Not a YES, not a reading — figure out what the patient actually wants
-            no_words = {"no", "n", "0", "nope", "nah"}
-            if msg_lower.strip().rstrip("!.") in no_words:
+            if msg_lower.rstrip("!.") in NO_WORDS:
                 intent = "missed"
             else:
                 intent = await classify_intent(name, message)
