@@ -123,9 +123,42 @@ EMERGENCY_PATTERNS = [
 ]
 
 
+# Phrasings a substring list can't hold: body part and symptom in either order,
+# with a few words between ("my lips and face are swelling", "swollen tongue").
+# Swelling of the face, lips, tongue or throat is treated as an emergency because
+# for a patient on an ACE inhibitor it can be angioedema, which can close the
+# airway — telling that patient "don't stop your medication" would be harmful.
+EMERGENCY_REGEXES = [re.compile(p) for p in (
+    # Angioedema / airway
+    r"\b(lips?|tongue|throat|face|facial|mouth)\b(\W+\w+){0,4}?\W+(swell\w*|swollen|puff\w*)",
+    r"\b(swell\w*|swollen|puff\w*)\b(\W+\w+){0,3}?\W+(lips?|tongue|throat|face|mouth)\b",
+    r"\bthroat\b(\W+\w+){0,3}?\W+(clos\w*|tight)",
+    # Stroke: one-sided or limb weakness/numbness, speech, facial droop
+    r"\b(weak|numb)\w*\b(\W+\w+){0,3}?\W+(left|right|one)\s+side",
+    r"\b(left|right|one)\s+side\b(\W+\w+){0,4}?\W+(weak|numb|dead|heavy)",
+    r"\b(arm|leg|hand|face)\b(\W+\w+){0,2}?\W+(numb|weak|dead|heavy)\b",
+    r"\b(can'?t|cannot|can not|unable to)\s+(move|lift|feel)\s+my\s+(arm|leg|hand)",
+    r"\b(can'?t|cannot|can not|unable to)\s+(talk|speak)\b",
+    r"\b(face|mouth)\b(\W+\w+){0,2}?\W+(droop\w*|twist\w*)",
+    r"\bslurr\w*",
+    # Breathing
+    r"\bbreathless\w*", r"\bout of breath\b", r"\b(hard|difficult) to breathe?\b",
+    r"\bcan'?t catch my breath\b",
+    # Confusion
+    r"\bconfus(ed|ion)\b",
+    # Ghanaian Pidgin
+    r"\bchest\s+(dey|de|di)\s+(pain|tight|hurt)", r"\bno fit (breathe?|talk|waka)\b",
+    r"\bbreath no (dey|de)\b", r"\b(don|done)\s+faint\b",
+    r"\b(face|mouth|lips?|tongue)\s+(don|done)\s+(swell|twist)",
+    # Twi — UNVERIFIED: drafted, must be checked by a Twi-speaking clinician.
+    #   "me koko (mu) yɛ me ya" = my chest hurts me; "mentumi nhome" = I can't breathe
+    r"\bkoko\b(\W+\w+){0,2}?\W+y[ɛe]\s+me\s+ya\b", r"\bm[ie]ntumi\s+nhome\b",
+)]
+
+
 def detect_emergency(message: str) -> bool:
-    t = message.lower()
-    return any(p in t for p in EMERGENCY_PATTERNS)
+    t = message.lower().replace("’", "'")
+    return any(p in t for p in EMERGENCY_PATTERNS) or any(r.search(t) for r in EMERGENCY_REGEXES)
 
 
 # Dental recovery concerns are intentionally deterministic. The assistant can
@@ -229,13 +262,63 @@ def wants_to_report_bp(message: str) -> bool:
     return (not has_number) and any(k in t for k in BP_INTENT_KEYWORDS)
 
 
-def assess_bp_risk(systolic: int, diastolic: int) -> tuple[str, str]:
+# Emergency numbers in Ghana: 112 (national emergency) and 193 (National
+# Ambulance Service). Every urgent message names both.
+EMERGENCY_NUMBERS = "112 or 193"
+DANGER_SIGNS = ("chest pain, difficulty breathing, a severe headache, weakness on one side, "
+                "confusion or trouble seeing")
+
+
+def bp_band(systolic: int, diastolic: int) -> str:
+    """Deterministic BP band. Thresholds need clinician sign-off before go-live.
+
+    crisis   ≥180 or ≥120  (hypertensive crisis range)
+    high     ≥160 or ≥100  (CLAUDE.md immediate-escalation threshold)
+    elevated ≥140 or ≥90   (above target)
+    low      <90 or <60    (hypotension — over-treatment, dehydration)
+    normal   otherwise
+    """
+    if systolic >= 180 or diastolic >= 120:
+        return "crisis"
     if systolic >= 160 or diastolic >= 100:
-        return "red", f"⚠️ {systolic}/{diastolic} is dangerously high. Please rest and go to the clinic today if you have a headache or chest tightness. I’ve marked this urgent for your care team."
-    elif systolic >= 140 or diastolic >= 90:
-        return "amber", f"⚠️ {systolic}/{diastolic} is above your target (below 140/90). I've noted this for your doctor. Try to reduce salt and stay consistent with your medication."
+        return "high"
+    if systolic >= 140 or diastolic >= 90:
+        return "elevated"
+    if systolic < 90 or diastolic < 60:
+        return "low"
+    return "normal"
+
+
+BP_BAND_RISK = {"crisis": "red", "high": "red", "elevated": "amber", "low": "amber", "normal": "green"}
+BP_BAND_REASON = {
+    "crisis": "Very high BP reading (crisis range): {reading}",
+    "high": "Dangerously high BP reading: {reading}",
+    "elevated": "Elevated BP reading: {reading}",
+    "low": "Low BP reading: {reading}",
+}
+
+
+def assess_bp_risk(systolic: int, diastolic: int) -> tuple[str, str]:
+    band = bp_band(systolic, diastolic)
+    reading = f"{systolic}/{diastolic}"
+    if band == "crisis":
+        note = (f"⚠️ {reading} is very high. Sit down and rest for 5 minutes, then check again. "
+                f"If you have {DANGER_SIGNS}, go to the nearest hospital now or call {EMERGENCY_NUMBERS}. "
+                "I've marked this urgent for your care team, who will contact you.")
+    elif band == "high":
+        note = (f"⚠️ {reading} is too high. Please contact your clinic today. "
+                f"If you have {DANGER_SIGNS}, go to the nearest hospital now or call {EMERGENCY_NUMBERS}. "
+                "I've marked this urgent for your care team.")
+    elif band == "elevated":
+        note = (f"⚠️ {reading} is above your target (below 140/90). I've noted this for your care team. "
+                "Try to reduce salt and stay consistent with your medication.")
+    elif band == "low":
+        note = (f"⚠️ {reading} is lower than expected. Sit or lie down and drink some water. "
+                f"If you feel faint, very dizzy or confused, go to the nearest clinic now or call {EMERGENCY_NUMBERS}. "
+                "I've noted this for your care team.")
     else:
-        return "green", f"✅ {systolic}/{diastolic} is in your target range. Excellent — your medication is working!"
+        note = f"✅ {reading} is in your target range. Well done — keep taking your medication."
+    return BP_BAND_RISK[band], note
 
 
 async def detect_reason_ai(patient_name: str, message: str) -> str:
@@ -281,7 +364,9 @@ BOT_RESPONSES = {
     ),
     "side_effect": (
         "That's important to tell us, {name}. I've marked this for your nurse to review. "
-        "Please don't stop your medication without speaking to your doctor first. 🏥"
+        "Please don't stop your medication without speaking to your doctor first. "
+        "If your face, lips or tongue swell, or you find it hard to breathe, "
+        "go to the nearest hospital now or call 112 or 193. 🏥"
     ),
     "ran_out": (
         "I've flagged this to your clinic, {name}. 🏥 They can help you get a refill. "

@@ -473,8 +473,10 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
                     // Inbound: the patient's voice note, played above what the
                     // model heard. Keeping both visible is the whole point — the
                     // gap between them is what the benchmark measures.
-                    // Outbound: the agent's spoken reply, above the same words
-                    // in text. Either way, provenance travels with the audio.
+                    // Outbound: the agent's spoken reply, shown audio-only just
+                    // as the patient receives it on WhatsApp. The text record
+                    // stays on the clinician timeline. Provenance travels with
+                    // the audio either way.
                     <div className="mb-1.5">
                       <audio controls src={api.voiceNoteUrl(msg.audio_file)} className="h-8 w-full max-w-[220px]" />
                       <div className="mt-1 flex items-center gap-1 flex-wrap text-[10px] text-slate-500">
@@ -497,7 +499,7 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
                       </div>
                     </div>
                   )}
-                  {msg.body}
+                  {!(isOut && msg.audio_file) && msg.body}
                   {msg.reason && msg.reason !== 'null' && (
                     <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full font-medium
                       ${msg.reason === 'cost' ? 'bg-red-100 text-red-600' :

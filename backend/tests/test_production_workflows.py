@@ -192,3 +192,133 @@ def test_production_mode_disables_demo_and_requires_webhook_signature(monkeypatc
     monkeypatch.delenv("META_APP_SECRET", raising=False)
     assert not demo_tools_enabled()
     assert not whatsapp.verify_signature(b"{}", None)
+
+
+def test_public_password_reset_is_not_exposed(client: TestClient):
+    # A separate client: signing in again here must not replace the shared
+    # staff session the other tests rely on.
+    client = TestClient(app)
+    response = client.post("/api/auth/password-reset", json={
+        "email": "admin@veloxacare.local", "password": "x",
+    })
+    assert response.status_code in {401, 404, 405}
+    login = client.post("/api/auth/login", json={
+        "email": "admin@veloxacare.local", "password": "VeloxaCare-Local-Only",
+    })
+    assert login.status_code == 200
+
+
+def test_failed_processing_replies_with_safety_message_and_opens_case(staff, monkeypatch):
+    client = staff["client"]
+    patient = client.get("/api/patients").json()[0]
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send_text(to: str, body: str) -> bool:
+        sent.append((to, body))
+        return True
+
+    async def broken_ingest(*args, **kwargs):
+        raise RuntimeError("simulated database outage")
+
+    monkeypatch.setattr(whatsapp, "send_text", fake_send_text)
+    monkeypatch.setattr(main_module, "ingest_patient_message", broken_ingest)
+
+    result = asyncio.run(main_module._process_whatsapp_message({
+        "id": "wamid.processing-failure-test",
+        "from": whatsapp.normalize_phone(patient["phone"]),
+        "type": "text",
+        "text": {"body": "my chest is very tight"},
+    }))
+
+    assert result["status"] == "processing_failed"
+    assert len(sent) == 1
+    assert "112" in sent[0][1] and "193" in sent[0][1]
+    case = next(
+        alert for alert in client.get("/api/alerts").json()
+        if alert["patient_id"] == patient["id"]
+        and alert["details"].get("reason") == "processing_failed"
+    )
+    assert case["risk_level"] == "red"
+    assert case["details"]["last_message"] == "my chest is very tight"
+
+
+def _send_as_patient(client: TestClient, csrf: str, patient_id: int, text: str) -> dict:
+    response = client.post(
+        f"/api/patients/{patient_id}/messages",
+        headers={"X-CSRF-Token": csrf}, json={"message": text},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def _open_case_for(client: TestClient, patient_id: int, predicate) -> dict:
+    return next(
+        alert for alert in client.get("/api/alerts").json()
+        if alert["patient_id"] == patient_id and predicate(alert)
+    )
+
+
+def test_rules_beat_the_llm_and_first_barrier_opens_a_case(staff, monkeypatch):
+    from services import bot
+
+    async def llm_says_forgot(*args, **kwargs):
+        return "forgot"
+
+    async def llm_says_other(*args, **kwargs):
+        return "other"
+
+    monkeypatch.setattr(bot, "detect_reason_ai", llm_says_forgot)
+    monkeypatch.setattr(bot, "classify_intent", llm_says_other)
+    client, csrf = staff["client"], staff["csrf"]
+    patient_id = client.get("/api/patients").json()[-1]["id"]
+    text = "I couldn't afford it this week so I forgot"
+
+    result = _send_as_patient(client, csrf, patient_id, text)
+
+    assert result["reply"]["reason"] == "cost"
+    assert result["escalation_created"]
+    case = _open_case_for(
+        client, patient_id, lambda a: a["details"].get("last_message") == text,
+    )
+    assert case["details"]["reason"] == "cost"
+    assert case["risk_level"] in {"amber", "red"}
+
+
+def test_low_bp_in_free_text_opens_a_case(staff):
+    client, csrf = staff["client"], staff["csrf"]
+    patient_id = client.get("/api/patients").json()[-1]["id"]
+    asyncio.run(_reset_flow(patient_id))
+
+    result = _send_as_patient(client, csrf, patient_id, "my reading today is 85/50")
+
+    assert "Excellent" not in result["reply"]["body"]
+    assert result["escalation_created"]
+    _open_case_for(client, patient_id, lambda a: a["details"].get("reading") == "85/50")
+
+
+def test_emergency_reply_names_numbers_and_keeps_the_reading(staff):
+    client, csrf = staff["client"], staff["csrf"]
+    patient_id = client.get("/api/patients").json()[-1]["id"]
+
+    result = _send_as_patient(client, csrf, patient_id, "190/120 and my lips are swelling")
+
+    body = result["reply"]["body"]
+    assert "112" in body and "193" in body
+    assert result["escalation_created"]
+    readings = asyncio.run(_latest_reading(patient_id))
+    assert readings == "190/120"
+
+
+async def _reset_flow(patient_id: int) -> None:
+    async with db.connect() as conn:
+        await conn.execute("DELETE FROM conversation_state WHERE patient_id=?", (patient_id,))
+        await conn.commit()
+
+
+async def _latest_reading(patient_id: int) -> str:
+    async with db.connect() as conn:
+        row = await (await conn.execute(
+            "SELECT reading_value FROM checkin_logs WHERE patient_id=? ORDER BY id DESC LIMIT 1",
+            (patient_id,),
+        )).fetchone()
+    return row[0] if row else ""

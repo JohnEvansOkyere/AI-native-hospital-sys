@@ -103,10 +103,14 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 
 ### Escalation rules (safety-critical — keep deterministic)
 
-- **High BP:** `≥160 systolic or ≥100 diastolic` → `red`, immediate escalation.
-  `≥140/90` → `amber`. Else `green`. (`ai.py:assess_bp_risk`)
-- **Cost / side-effect:** `amber` on first occurrence; `red` + escalation on the
-  **2nd within 14 days**. (`bot.py`)
+- **BP bands** (`ai.py:bp_band` / `assess_bp_risk`), each opening a case except normal:
+  `≥180/120` crisis → `red`; `≥160/100` high → `red`; `≥140/90` elevated → `amber`;
+  `<90/60` low → `amber`; else `green`. Urgent replies name 112 and 193.
+- **Emergency symptoms** (`ai.py:detect_emergency`, English, Ghanaian Pidgin and
+  draft Twi): immediate `red` case, before any other flow. Face, lip, tongue or
+  throat swelling counts as an emergency (possible ACE-inhibitor angioedema).
+- **Cost / side-effect / ran out:** an `amber` case on first occurrence; `red` on the
+  **2nd within 14 days**. A rule match always beats the LLM's reason. (`bot.py`)
 - **Streak ≥ 7 days** of `yes` pulls risk back toward `green`.
 
 ---
