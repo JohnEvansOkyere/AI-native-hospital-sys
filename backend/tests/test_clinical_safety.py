@@ -235,3 +235,61 @@ def test_groq_replies_pass_the_same_safety_screen(monkeypatch):
 def test_rules_answer_when_no_model_is_available():
     from services import ai
     assert _run(ai.detect_reason_ai("Ama", "I ran out of pills")) == "ran_out"
+
+
+from services.ai import (  # noqa: E402
+    assess_dental_concern, assess_eye_concern, classify_intent_rule, is_affirmative,
+)
+
+
+@pytest.mark.parametrize("message", [
+    "yes", "Yes I took it", "ok", "I have taken my medicine", "done ✅",
+    "I don take am this morning", "I take am already",
+])
+def test_dose_confirmations(message):
+    assert is_affirmative(message)
+
+
+@pytest.mark.parametrize("message", [
+    # A miss logged as taken corrupts the adherence record.
+    "I didn't take it, I forgot", "I did not take it", "I haven't taken it yet",
+    "I have not taken it", "no I didn't", "not taken", "I missed it today",
+    # Acknowledgements and questions are not confirmations.
+    "Okay\nThank you", "Thanks", "is it ok to exercise?", "dizzy",
+])
+def test_not_dose_confirmations(message):
+    assert not is_affirmative(message)
+
+
+@pytest.mark.parametrize("message, risk", [
+    ("No pain at all, it's healing well", None),
+    ("No bleeding anymore, thank you", None),
+    ("no fever and no swelling", None),
+    ("Slight pain when I chew", "amber"),
+    ("My jaw dey swell", "amber"),
+    ("It is still bleeding a lot and it won't stop", "red"),
+    ("no, the bleeding won't stop", "red"),
+    ("My face is swelling and I have fever", "red"),
+])
+def test_dental_concerns(message, risk):
+    assert assess_dental_concern(message)[0] == risk
+
+
+@pytest.mark.parametrize("message, risk", [
+    ("No pain and no redness", None),
+    ("My vision is better today, thank you", None),
+    ("My eye dey pain me small", "amber"),
+    ("I'm seeing flashes and floaters since yesterday", "red"),
+    ("Suddenly I can't see from the operated eye", "red"),
+])
+def test_eye_concerns(message, risk):
+    assert assess_eye_concern(message)[0] == risk
+
+
+@pytest.mark.parametrize("message, intent", [
+    ("No headache, no dizziness, I'm fine", "other"),
+    ("The tablets make me dizzy so I stopped", "missed"),
+    ("I no get money buy the medicine", "missed"),
+])
+def test_intent_rule_respects_denied_symptoms(message, intent):
+    assert classify_intent_rule(message) == intent

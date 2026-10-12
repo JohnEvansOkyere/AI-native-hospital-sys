@@ -46,7 +46,9 @@ def appointment_intent(text: str) -> str | None:
         return "reschedule"
     if has_appointment and any(word in value for word in ("when is", "what time", "details", "check my")):
         return "status"
-    if has_appointment or any(word in value for word in ("book me", "book a visit", "schedule a visit")):
+    if has_appointment or any(word in value for word in (
+        "book me", "book my", "book a visit", "book a review", "schedule a visit",
+    )):
         return "book"
     return None
 

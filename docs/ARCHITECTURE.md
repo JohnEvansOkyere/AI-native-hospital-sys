@@ -127,8 +127,11 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 
 **How the models are used:** Claude first, at low effort with a 20-second timeout
 and one retry. If Claude has no key, errors, times out or declines, Groq answers
-(`llama-3.1-8b-instant`, 10-second timeout, no retry; `llama-3.3-70b-versatile`
-for the report). If neither answers, the rules do. Worst case per call is about
+(`llama-3.3-70b-versatile`, 10-second timeout, no retry — 70B rather than 8B because a small model tends to copy
+earlier bot messages instead of answering). If neither answers, the rules do. A
+reply that repeats a message the bot already sent (Claude once answered a patient's
+question with the enrolment welcome) gets one retry with a direct instruction, then
+the template. Worst case per call is about
 50 seconds, inside the 120-second budget for a message. Only the patient's first name is sent. A reply that changes a dose, stops
 medication, judges a BP number or offers a diagnosis is blocked by
 `reply_is_safe()` and replaced with the template. BP risk, emergencies and
