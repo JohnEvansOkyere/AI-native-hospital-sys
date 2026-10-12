@@ -1,0 +1,42 @@
+# Scheduled jobs for the deployed backend.
+#
+# Vercel's Hobby plan only allows daily cron jobs, so the schedule lives here
+# instead of in vercel.json. Both endpoints are idempotent, so one 5-minute
+# schedule drives both:
+#   /api/cron/inbound  sweeps WhatsApp messages the background task missed
+#   /api/cron/hourly   sends due medication reminders (one per patient per day)
+# GitHub can delay scheduled runs under load; the inbound sweep is a safety
+# net, since messages are normally processed straight after the webhook.
+#
+# Needs repository settings: secret CRON_SECRET (same value as on Vercel) and
+# variable APP_URL (e.g. https://ai-native-hospital-sys.vercel.app).
+name: Scheduled jobs
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: scheduled-jobs
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      APP_URL: ${{ vars.APP_URL }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+    steps:
+      - name: Check configuration
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set the APP_URL variable and CRON_SECRET secret in the repository settings."
+            exit 1
+          fi
+      - name: Sweep inbound WhatsApp messages
+        run: curl -fsS --max-time 290 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/inbound"
+      - name: Send due reminders
+        if: always()
+        run: curl -fsS --max-time 290 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/hourly"

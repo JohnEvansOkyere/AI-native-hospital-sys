@@ -84,32 +84,38 @@ is honestly labelled `dashboard_only`.
 
 The WhatsApp webhook never processes a message while Meta waits. It stores each
 message in `inbound_events`, returns 200, and processes it as a background task
-straight after the response. Vercel calls `/api/cron/inbound` every minute with
-the same `CRON_SECRET`, which picks up anything the background task did not
-reach and anything whose function was killed mid-way.
+straight after the response. The scheduler (below) calls `/api/cron/inbound`,
+which picks up anything the background task did not reach and anything whose
+function was killed mid-way.
 
 - A message is processed at most once from the patient's point of view. If a
   killed run had already recorded the message, it is not processed again; the
   patient gets the safety reply (naming 112 and 193) and the care team a red case.
 - Each message gets at most three attempts and `INBOUND_BUDGET_S` seconds
   (default 120) per attempt; past either, the same safety reply and red case.
-- The per-minute schedule needs a plan that allows per-minute Cron Jobs. On a
-  plan without them, call `/api/cron/inbound` from an external scheduler.
 - Go-live check: send a test message and confirm the reply arrives within a
-  few seconds. A reply that consistently takes up to a minute means background
+  few seconds. A reply that consistently takes several minutes means background
   tasks are not running after the response on this deployment, and only the
   sweep is processing messages.
 
 ## Scheduler and retry behaviour
 
-Vercel calls `/api/cron/hourly` at the top of every hour. The endpoint accepts
-only `Authorization: Bearer ${CRON_SECRET}`. Each medication reminder has a
-unique `(patient, kind, date)` dispatch record, so two cron calls cannot create
-two sends. Failed sends retry up to three times and remain visible in Today.
+Vercel's Hobby plan only allows daily Cron Jobs, so the schedule runs from
+GitHub Actions instead (`.github/workflows/scheduled-jobs.yml`): every 5 minutes
+it calls `/api/cron/inbound` and then `/api/cron/hourly`. Both endpoints accept
+only `Authorization: Bearer ${CRON_SECRET}`. Set the repository secret
+`CRON_SECRET` (the same value as on Vercel) and the repository variable
+`APP_URL` (the production URL).
 
-The hourly schedule requires a Vercel plan that supports hourly Cron Jobs. If
-the deployment plan only supports daily jobs, use an external hourly scheduler
-with the same bearer token or upgrade before enrolling patients.
+Each medication reminder has a unique `(patient, kind, date)` dispatch record,
+so repeated calls cannot create two sends; a reminder goes out in the first run
+within its hour. Failed sends retry, up to three attempts, on the next runs and
+remain visible in Today.
+
+GitHub can delay scheduled runs by several minutes when it is busy. That is
+acceptable while the inbound sweep is only a safety net, but before relying on
+it for many patients, move the schedule to Vercel Pro Cron Jobs (per minute) or
+a dedicated scheduler such as cron-job.org with the same bearer token.
 
 ## Go-live verification
 
