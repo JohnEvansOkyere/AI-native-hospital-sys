@@ -218,6 +218,10 @@ Full detail in [benchmark/README.md](benchmark/README.md). The load-bearing bits
 - Smoke-test the backend by starting uvicorn and hitting `/api/patients`,
   `/api/patients/{id}/messages`, `/api/alerts`, and `/api/stt/status`.
 - After touching scenarios or scoring, run `python sync_scenarios.py --check`.
+- After touching bot logic, AI prompts or rules, run
+  `cd backend && python evals/run_conversations.py` (offline, free) and compare
+  with the last result in `backend/evals/results/`. Add a scenario for every bug
+  a patient or tester finds. See [backend/evals/README.md](backend/evals/README.md).
 - If you write test data into `backend/veloxacare.db`, clean it out afterwards — it's the
   demo database, and a stray red patient wrecks a live demo.
 - Keep replies warm, short, Ghana-appropriate, and in simple English. Patient-facing
