@@ -8,7 +8,7 @@ How to run the demo and walk a clinic (or pharmacy) through it so they can't say
 
 ```bash
 cd /home/grejoy/Projects/Clinic-Bot
-cp .env.example .env        # paste GROQ_API_KEY for the live AI report
+cp .env.example .env        # paste ANTHROPIC_API_KEY for the live AI replies and report
 ./start.sh                  # wait for "VeloxaCare is running!"
 ```
 
@@ -91,7 +91,7 @@ For the code-switched version, send:
 
 ### Beat 5 — "What the doctor actually wants" (the report)
 - Click **Weekly Report** in the top bar.
-- Groq generates a doctor-ready summary: urgent cases first, per-patient breakdown,
+- Claude generates a doctor-ready summary: urgent cases first, per-patient breakdown,
   recommended actions. Click **Print / Save PDF**.
 
 > *"This lands on the doctor's desk the night before clinic. Every patient, summarized,

@@ -32,11 +32,11 @@ clinic, and surfaces the ones who are slipping — *and why* — to the care tea
          │                        │
          ▼                        ▼
  ┌──────────────┐        ┌──────────────────┐
- │  Database    │        │  Groq (ai.py)    │
+ │  Database    │        │  Claude (ai.py)  │
  │  SQLite dev  │        │  • reason detect │
- │  Supabase    │        │    (Llama 3.1)   │
+ │  Supabase    │        │  • chat replies  │
  │  PostgreSQL  │        │  • weekly report │
- └──────────────┘        │    (Llama 3.3)   │
+ └──────────────┘        │    (screened)    │
          │               │  • BP risk =     │
          ▼               │    RULE-BASED    │
  ┌──────────────┐        └──────────────────┘
@@ -119,14 +119,19 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 
 | Function | Model | Job | Fallback |
 |---|---|---|---|
-| `detect_reason_ai` | `llama-3.1-8b-instant` | Classify why a dose was missed → one reason code | keyword rules (`detect_reason_rule`) |
-| `generate_bot_reply` | `llama-3.1-8b-instant` | Warm free-text reply for unclear "no" cases | templated responses |
-| `generate_weekly_report` | `llama-3.3-70b-versatile` | Doctor-ready markdown clinic report | templated summary |
+| `detect_reason_ai` | `claude-opus-5-5`, low effort | Classify why a dose was missed → one reason code (only when no keyword rule matched) | keyword rules (`detect_reason_rule`) |
+| `classify_intent` | `claude-opus-5-5`, low effort | missed / appointment / question / other | `classify_intent_rule` |
+| `generate_bot_reply`, `generate_assistant_reply`, `generate_care_assistant_reply` | `claude-opus-5-5`, low effort | Warm conversational replies, screened by `reply_is_safe()` | templated responses |
+| `generate_weekly_report` | `claude-opus-5-5`, medium effort | Doctor-ready markdown clinic report | templated summary |
 | `assess_bp_risk` | **none (rules)** | BP → risk + patient message | n/a — always rules |
 
-**Why these models:** the 8B model is cheap/fast for high-volume per-message work;
-the 70B model produces the clinician report. BP risk is intentionally *never* an
-LLM call. Override the defaults with `GROQ_FAST_MODEL` and `GROQ_REPORT_MODEL`.
+**How Claude is used:** low effort and a 20-second timeout keep per-message calls
+inside the patient's reply path; any error, timeout or refusal falls back to the
+rules. Only the patient's first name is sent. A reply that changes a dose, stops
+medication, judges a BP number or offers a diagnosis is blocked by
+`reply_is_safe()` and replaced with the template. BP risk, emergencies and
+escalation are intentionally *never* an LLM call. Override the models with
+`CLAUDE_FAST_MODEL` and `CLAUDE_REPORT_MODEL`.
 
 ---
 
@@ -148,7 +153,7 @@ LLM call. Override the defaults with `GROQ_FAST_MODEL` and `GROQ_REPORT_MODEL`.
 | PATCH | `/api/appointments/{id}` | Reschedule, complete, cancel or mark no-show |
 | GET | `/api/alerts` | Open escalations across all patients |
 | POST | `/api/alerts/{id}/resolve` | Resolve an alert |
-| GET | `/api/reports/weekly` | Groq-generated weekly report |
+| GET | `/api/reports/weekly` | Claude-generated weekly report |
 | WS | `/ws/{patient_id}` | Per-patient live message stream |
 | WS | `/ws/-1` | Global stream (enrollments, escalations, updates) |
 

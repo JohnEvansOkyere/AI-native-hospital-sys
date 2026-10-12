@@ -101,7 +101,7 @@ signed off by a supervising clinician, not just by engineering.
   cost or side-effect report the reply says "I've marked this for your care
   team", but no escalation row is written, so staff never see it. **Fix:**
   create an amber case on the first report, or change the wording.
-- [ ] **P0-9 Limit the LLM's free-text replies.**
+- [x] **P0-9 Limit the LLM's free-text replies.** *Done 12 Oct 2026, with the switch from Groq to Claude: the prompts drop side-effect explanations and BP judgements, treat patient text as data, and send only the first name. `reply_is_safe()` blocks dose, stop-medication, BP-judgement and diagnosis language and sends the template instead. Calls have a 20-second timeout and one retry.*
   - The chat prompt invites diet, exercise and side-effect advice.
   - The raw patient message and recent turns go in unfiltered, and the output is
     sent unchecked.
@@ -115,8 +115,8 @@ signed off by a supervising clinician, not just by engineering.
 
 - [ ] **P0-10 Get consent and agreements that cover the data flows.**
   - Patient data reaches these services:
-    - Groq gets the full name, condition, drug, BP, care plan and chat history
-      on every free-text turn.
+    - Anthropic (Claude) gets the first name, condition, drug, care plan and
+      recent chat history on free-text turns. Groq is no longer used.
     - Intron, Cartesia, GhanaNLP and OpenAI get voice audio.
     - Meta gets the messages.
   - The consent note covers "WhatsApp care messages" only.
