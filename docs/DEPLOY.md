@@ -89,6 +89,7 @@ is shared across both services.
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | first production staff account |
 | `DATABASE_URL` | Supabase transaction-pooler PostgreSQL URL — **required** |
 | `ANTHROPIC_API_KEY` | Claude: agent replies, reason detection, weekly report |
+| `GROQ_API_KEY` | Groq fallback when Claude can't answer (optional) |
 | `META_ACCESS_TOKEN` | sending WhatsApp replies |
 | `META_PHONE_NUMBER_ID` | sending WhatsApp replies |
 | `META_VERIFY_TOKEN` | webhook handshake |

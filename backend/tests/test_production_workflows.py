@@ -25,6 +25,9 @@ os.environ.update({
     "TURSO_DATABASE_URL": "",
     "TURSO_AUTH_TOKEN": "",
     "CRON_SECRET": "test-cron-secret",
+    # Hermetic: no model calls leave the test run, whatever the local .env holds.
+    "ANTHROPIC_API_KEY": "",
+    "GROQ_API_KEY": "",
     "META_MEDICATION_REMINDER_TEMPLATE": "",
     "BOOTSTRAP_ADMIN_EMAIL": "",
     "BOOTSTRAP_ADMIN_PASSWORD": "",

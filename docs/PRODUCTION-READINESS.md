@@ -116,7 +116,8 @@ signed off by a supervising clinician, not just by engineering.
 - [ ] **P0-10 Get consent and agreements that cover the data flows.**
   - Patient data reaches these services:
     - Anthropic (Claude) gets the first name, condition, drug, care plan and
-      recent chat history on free-text turns. Groq is no longer used.
+      recent chat history on free-text turns. Groq gets the same whenever it
+      stands in for Claude.
     - Intron, Cartesia, GhanaNLP and OpenAI get voice audio.
     - Meta gets the messages.
   - The consent note covers "WhatsApp care messages" only.

@@ -125,9 +125,11 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 | `generate_weekly_report` | `claude-opus-5-5`, medium effort | Doctor-ready markdown clinic report | templated summary |
 | `assess_bp_risk` | **none (rules)** | BP → risk + patient message | n/a — always rules |
 
-**How Claude is used:** low effort and a 20-second timeout keep per-message calls
-inside the patient's reply path; any error, timeout or refusal falls back to the
-rules. Only the patient's first name is sent. A reply that changes a dose, stops
+**How the models are used:** Claude first, at low effort with a 20-second timeout
+and one retry. If Claude has no key, errors, times out or declines, Groq answers
+(`llama-3.1-8b-instant`, 10-second timeout, no retry; `llama-3.3-70b-versatile`
+for the report). If neither answers, the rules do. Worst case per call is about
+50 seconds, inside the 120-second budget for a message. Only the patient's first name is sent. A reply that changes a dose, stops
 medication, judges a BP number or offers a diagnosis is blocked by
 `reply_is_safe()` and replaced with the template. BP risk, emergencies and
 escalation are intentionally *never* an LLM call. Override the models with

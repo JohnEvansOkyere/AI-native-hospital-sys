@@ -147,6 +147,13 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_model_calls(monkeypatch):
+    from services import ai
+    monkeypatch.setattr(ai, "get_client", lambda: None)
+    monkeypatch.setattr(ai, "get_groq_client", lambda: None)
+
+
 def test_claude_request_shape_and_safe_reply(monkeypatch):
     from services import ai
     fake = _FakeClaude("Well done, Ama! Keep it up. 😊")
@@ -178,3 +185,53 @@ def test_classifier_rejects_off_list_answers(monkeypatch):
     assert _run(ai.classify_intent("Ama", "when is my visit?")) in ai.INTENTS
     monkeypatch.setattr(ai, "get_client", lambda: _FakeClaude("cost"))
     assert _run(ai.detect_reason_ai("Ama", "no money this week")) == "cost"
+
+
+class _FakeGroq:
+    """Stands in for AsyncGroq."""
+
+    def __init__(self, text: str):
+        self.text, self.calls = text, []
+        self.chat = self
+        self.completions = self
+
+    def with_options(self, **_):
+        return self
+
+    async def create(self, **kwargs):
+        from types import SimpleNamespace
+        self.calls.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.text))])
+
+
+def test_groq_answers_when_claude_cannot(monkeypatch):
+    from services import ai
+    fake_groq = _FakeGroq("Thanks Ama, your care team has your message. 😊")
+    monkeypatch.setattr(ai, "get_client", lambda: _FakeClaude("", stop_reason="refusal"))
+    monkeypatch.setattr(ai, "get_groq_client", lambda: fake_groq)
+    facts = {"name": "Ama Owusu", "condition": "hypertension", "drug_name": "Amlodipine",
+             "drug_dosage": "5mg", "adherence_pct": 90, "streak": 4}
+    assert _run(ai.generate_assistant_reply(facts, [], "hello")) == fake_groq.text
+    assert fake_groq.calls[0]["messages"][0]["role"] == "system"
+
+
+def test_groq_is_not_called_when_claude_answers(monkeypatch):
+    from services import ai
+    fake_groq = _FakeGroq("other")
+    monkeypatch.setattr(ai, "get_client", lambda: _FakeClaude("appointment"))
+    monkeypatch.setattr(ai, "get_groq_client", lambda: fake_groq)
+    assert _run(ai.classify_intent("Ama", "can I book a visit?")) == "appointment"
+    assert fake_groq.calls == []
+
+
+def test_groq_replies_pass_the_same_safety_screen(monkeypatch):
+    from services import ai
+    monkeypatch.setattr(ai, "get_groq_client", lambda: _FakeGroq("Stop taking your tablets for now."))
+    facts = {"name": "Ama Owusu", "condition": "hypertension", "drug_name": "Amlodipine",
+             "drug_dosage": "5mg", "adherence_pct": 90, "streak": 4}
+    assert "Stop taking" not in _run(ai.generate_assistant_reply(facts, [], "I feel tired"))
+
+
+def test_rules_answer_when_no_model_is_available():
+    from services import ai
+    assert _run(ai.detect_reason_ai("Ama", "I ran out of pills")) == "ran_out"
