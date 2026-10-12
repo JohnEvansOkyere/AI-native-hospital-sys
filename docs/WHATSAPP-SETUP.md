@@ -153,10 +153,12 @@ A patient who sends a voice note gets one back. `TTS_MODE=mirror` — the defaul
 speaks only when the patient spoke, so typed conversations cost no synthesis
 credit and get no audio. `always` speaks every reply; `off` disables it.
 
-The reply is sent twice, as text and then as audio, because they do different
-jobs: the text stays readable, searchable and forwardable to a family member,
-while the audio is what a patient who can't read it needs. Set
-`TTS_WHATSAPP_SEND_TEXT=0` for voice-only.
+The reply goes out in the patient's modality only: a voice note gets a voice
+note, a typed message gets text. The English text is still stored and shown to
+clinicians on the dashboard. If the voice note can't be delivered (synthesis
+failed, or Meta rejected the media upload) the text is sent instead, so the
+patient never gets silence. Set `TTS_WHATSAPP_SEND_TEXT=1` to send the text
+alongside the audio as well.
 
 Providers reuse the STT keys — `INTRON_API_KEY` and `CARTESIA_API_KEY`, nothing
 new to obtain. Intron returns Ogg/Opus, which WhatsApp renders as a true

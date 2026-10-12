@@ -88,7 +88,7 @@ is shared across both services.
 | `APP_ENV=production` | disables demo data/tools and enforces production configuration |
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | first production staff account |
 | `DATABASE_URL` | Supabase transaction-pooler PostgreSQL URL — **required** |
-| `GROQ_API_KEY` | AI reason detection + weekly report |
+| `ANTHROPIC_API_KEY` | Claude: agent replies, reason detection, weekly report |
 | `META_ACCESS_TOKEN` | sending WhatsApp replies |
 | `META_PHONE_NUMBER_ID` | sending WhatsApp replies |
 | `META_VERIFY_TOKEN` | webhook handshake |

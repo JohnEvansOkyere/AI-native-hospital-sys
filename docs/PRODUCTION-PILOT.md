@@ -80,6 +80,26 @@ alert number and approved template are configured, VeloxaCare sends a durable
 WhatsApp notification and records whether Meta accepted it. Otherwise the case
 is honestly labelled `dashboard_only`.
 
+## Inbound message queue
+
+The WhatsApp webhook never processes a message while Meta waits. It stores each
+message in `inbound_events`, returns 200, and processes it as a background task
+straight after the response. Vercel calls `/api/cron/inbound` every minute with
+the same `CRON_SECRET`, which picks up anything the background task did not
+reach and anything whose function was killed mid-way.
+
+- A message is processed at most once from the patient's point of view. If a
+  killed run had already recorded the message, it is not processed again; the
+  patient gets the safety reply (naming 112 and 193) and the care team a red case.
+- Each message gets at most three attempts and `INBOUND_BUDGET_S` seconds
+  (default 120) per attempt; past either, the same safety reply and red case.
+- The per-minute schedule needs a plan that allows per-minute Cron Jobs. On a
+  plan without them, call `/api/cron/inbound` from an external scheduler.
+- Go-live check: send a test message and confirm the reply arrives within a
+  few seconds. A reply that consistently takes up to a minute means background
+  tasks are not running after the response on this deployment, and only the
+  sweep is processing messages.
+
 ## Scheduler and retry behaviour
 
 Vercel calls `/api/cron/hourly` at the top of every hour. The endpoint accepts

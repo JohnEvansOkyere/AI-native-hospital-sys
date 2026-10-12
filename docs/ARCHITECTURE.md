@@ -32,11 +32,11 @@ clinic, and surfaces the ones who are slipping — *and why* — to the care tea
          │                        │
          ▼                        ▼
  ┌──────────────┐        ┌──────────────────┐
- │  Database    │        │  Groq (ai.py)    │
+ │  Database    │        │  Claude (ai.py)  │
  │  SQLite dev  │        │  • reason detect │
- │  Supabase    │        │    (Llama 3.1)   │
+ │  Supabase    │        │  • chat replies  │
  │  PostgreSQL  │        │  • weekly report │
- └──────────────┘        │    (Llama 3.3)   │
+ └──────────────┘        │    (screened)    │
          │               │  • BP risk =     │
          ▼               │    RULE-BASED    │
  ┌──────────────┐        └──────────────────┘
@@ -65,7 +65,7 @@ SQLite tables (see [backend/db.py](../backend/db.py)). Maps 1:1 to Postgres/Supa
 
 | Table | Purpose |
 |---|---|
-| `patients` | Profile, condition, drug, assigned doctor, current `risk_level` |
+| `patients` | Profile, condition, drug, assigned doctor, care instructions, patient-reported context and current `risk_level` |
 | `messages` | Full WhatsApp transcript (inbound/outbound, optional `reason` tag) |
 | `adherence_logs` | One row per day per patient: `yes` / `cost` / `forgot` / … |
 | `checkin_logs` | BP (or other) readings with computed `risk_level` + AI note |
@@ -103,10 +103,14 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 
 ### Escalation rules (safety-critical — keep deterministic)
 
-- **High BP:** `≥160 systolic or ≥100 diastolic` → `red`, immediate escalation.
-  `≥140/90` → `amber`. Else `green`. (`ai.py:assess_bp_risk`)
-- **Cost / side-effect:** `amber` on first occurrence; `red` + escalation on the
-  **2nd within 14 days**. (`bot.py`)
+- **BP bands** (`ai.py:bp_band` / `assess_bp_risk`), each opening a case except normal:
+  `≥180/120` crisis → `red`; `≥160/100` high → `red`; `≥140/90` elevated → `amber`;
+  `<90/60` low → `amber`; else `green`. Urgent replies name 112 and 193.
+- **Emergency symptoms** (`ai.py:detect_emergency`, English, Ghanaian Pidgin and
+  draft Twi): immediate `red` case, before any other flow. Face, lip, tongue or
+  throat swelling counts as an emergency (possible ACE-inhibitor angioedema).
+- **Cost / side-effect / ran out:** an `amber` case on first occurrence; `red` on the
+  **2nd within 14 days**. A rule match always beats the LLM's reason. (`bot.py`)
 - **Streak ≥ 7 days** of `yes` pulls risk back toward `green`.
 
 ---
@@ -115,14 +119,19 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 
 | Function | Model | Job | Fallback |
 |---|---|---|---|
-| `detect_reason_ai` | `llama-3.1-8b-instant` | Classify why a dose was missed → one reason code | keyword rules (`detect_reason_rule`) |
-| `generate_bot_reply` | `llama-3.1-8b-instant` | Warm free-text reply for unclear "no" cases | templated responses |
-| `generate_weekly_report` | `llama-3.3-70b-versatile` | Doctor-ready markdown clinic report | templated summary |
+| `detect_reason_ai` | `claude-opus-5-5`, low effort | Classify why a dose was missed → one reason code (only when no keyword rule matched) | keyword rules (`detect_reason_rule`) |
+| `classify_intent` | `claude-opus-5-5`, low effort | missed / appointment / question / other | `classify_intent_rule` |
+| `generate_bot_reply`, `generate_assistant_reply`, `generate_care_assistant_reply` | `claude-opus-5-5`, low effort | Warm conversational replies, screened by `reply_is_safe()` | templated responses |
+| `generate_weekly_report` | `claude-opus-5-5`, medium effort | Doctor-ready markdown clinic report | templated summary |
 | `assess_bp_risk` | **none (rules)** | BP → risk + patient message | n/a — always rules |
 
-**Why these models:** the 8B model is cheap/fast for high-volume per-message work;
-the 70B model produces the clinician report. BP risk is intentionally *never* an
-LLM call. Override the defaults with `GROQ_FAST_MODEL` and `GROQ_REPORT_MODEL`.
+**How Claude is used:** low effort and a 20-second timeout keep per-message calls
+inside the patient's reply path; any error, timeout or refusal falls back to the
+rules. Only the patient's first name is sent. A reply that changes a dose, stops
+medication, judges a BP number or offers a diagnosis is blocked by
+`reply_is_safe()` and replaced with the template. BP risk, emergencies and
+escalation are intentionally *never* an LLM call. Override the models with
+`CLAUDE_FAST_MODEL` and `CLAUDE_REPORT_MODEL`.
 
 ---
 
@@ -133,6 +142,7 @@ LLM call. Override the defaults with `GROQ_FAST_MODEL` and `GROQ_REPORT_MODEL`.
 | GET | `/api/patients` | All active patients with computed adherence, streak, escalations |
 | GET | `/api/patients/{id}` | One patient, full detail |
 | POST | `/api/patients` | Enroll (sends welcome message) |
+| PATCH | `/api/patients/{id}/profile` | Update staff care instructions and patient-reported context |
 | GET | `/api/patients/{id}/messages` | Transcript |
 | POST | `/api/patients/{id}/messages` | **Inbound message → bot reply** (core loop) |
 | POST | `/api/patients/{id}/remind` | Fire medication reminder |
@@ -143,7 +153,7 @@ LLM call. Override the defaults with `GROQ_FAST_MODEL` and `GROQ_REPORT_MODEL`.
 | PATCH | `/api/appointments/{id}` | Reschedule, complete, cancel or mark no-show |
 | GET | `/api/alerts` | Open escalations across all patients |
 | POST | `/api/alerts/{id}/resolve` | Resolve an alert |
-| GET | `/api/reports/weekly` | Groq-generated weekly report |
+| GET | `/api/reports/weekly` | Claude-generated weekly report |
 | WS | `/ws/{patient_id}` | Per-patient live message stream |
 | WS | `/ws/-1` | Global stream (enrollments, escalations, updates) |
 

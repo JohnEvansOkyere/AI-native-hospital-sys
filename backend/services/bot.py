@@ -6,7 +6,7 @@ from services.appointments import handle_appointment_turn
 
 from services.ai import (
     detect_reason_ai, detect_reason_rule, generate_bot_reply,
-    parse_bp, assess_bp_risk, is_affirmative,
+    parse_bp, assess_bp_risk, bp_band, BP_BAND_REASON, is_affirmative,
     classify_intent, generate_assistant_reply, detect_emergency,
     wants_to_report_bp, assess_dental_concern, assess_eye_concern, display_first_name,
     generate_care_assistant_reply,
@@ -56,10 +56,20 @@ async def _build_context(patient_id: int, db: Connection,
     bp_row = await cursor.fetchone()
     last_bp = bp_row[0] if bp_row else None
 
+    # Staff-entered care plan plus patient-reported context. The latter is
+    # intentionally labelled as unverified in the AI instructions.
+    cursor = await db.execute(
+        "SELECT care_instructions, patient_context FROM patients WHERE id=?",
+        (patient_id,),
+    )
+    profile = await cursor.fetchone()
+
     facts = {
         "name": name, "condition": condition, "drug_name": drug_name,
         "drug_dosage": drug_dosage, "adherence_pct": adherence_pct,
         "streak": streak, "last_bp": last_bp,
+        "care_plan": profile[0] or "" if profile else "",
+        "patient_context": profile[1] or "" if profile else "",
     }
 
     # Recent conversation (oldest→newest), includes the just-logged inbound as last turn
@@ -81,8 +91,33 @@ ESCALATE_AT = {"cost": 2, "ran_out": 2, "side_effect": 2}
 ESC_REASON_TEXT = {
     "cost": "Cost barrier — patient unable to afford medication ({count}x in 14 days)",
     "ran_out": "Out of medication — patient has run out ({count}x in 14 days)",
-    "side_effect": "Side effect reported — patient flagged an adverse reaction",
+    "side_effect": "Side effect reported — patient flagged an adverse reaction ({count}x in 14 days)",
 }
+
+
+async def _record_bp_reading(patient_id: int, systolic: int, diastolic: int,
+                             message: str, db: Connection, now: str) -> tuple[str, bool]:
+    """Log a BP reading, set risk, and open a case for anything outside normal.
+
+    One path for the check-in flow and free text, so a reading gets the same
+    treatment however the patient sends it. Returns (reply, escalation_created).
+    """
+    risk_level, note = assess_bp_risk(systolic, diastolic)
+    band = bp_band(systolic, diastolic)
+    reading = f"{systolic}/{diastolic}"
+    await db.execute(
+        "INSERT INTO checkin_logs (patient_id, reading_type, reading_value, risk_level, ai_note, created_at) VALUES (?,?,?,?,?,?)",
+        (patient_id, "bp", reading, risk_level, note, now)
+    )
+    await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk_level, patient_id))
+    if band not in BP_BAND_REASON:
+        return note, False
+    details = json.dumps({"reading": reading, "band": band, "target": "below 140/90", "message": message})
+    await db.execute(
+        "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
+        (patient_id, BP_BAND_REASON[band].format(reading=reading), risk_level, details, now)
+    )
+    return note, True
 
 
 async def _handle_missed_dose(patient_id: int, name: str, message: str,
@@ -90,9 +125,16 @@ async def _handle_missed_dose(patient_id: int, name: str, message: str,
     """Single source of truth for a missed/blocked dose: detect the reason, log it,
     and apply the escalation rules. Used by BOTH the reminder-reply flow and free chat,
     so a cost barrier is flagged no matter how the patient phrases it."""
-    reason = await detect_reason_ai(name, message)
-    if reason == "other":
-        reason = detect_reason_rule(message) or "other"
+    # Deterministic rules win for treatment barriers. Escalation is a clinical
+    # decision, so the LLM may only fill in where the rules found nothing:
+    # "couldn't afford it so I forgot" must count as cost, whatever the model says.
+    rule_reason = detect_reason_rule(message)
+    if rule_reason in ESCALATE_AT:
+        reason = rule_reason
+    else:
+        reason = await detect_reason_ai(name, message)
+        if reason == "other":
+            reason = rule_reason or "other"
 
     await db.execute(
         "INSERT INTO adherence_logs (patient_id, log_date, response, created_at) VALUES (?,?,?,?)",
@@ -118,7 +160,20 @@ async def _handle_missed_dose(patient_id: int, name: str, message: str,
             await db.execute("UPDATE patients SET risk_level='red' WHERE id=?", (patient_id,))
             escalation_created = True
         else:
-            await db.execute("UPDATE patients SET risk_level='amber' WHERE id=?", (patient_id,))
+            # The reply tells the patient their care team has been told, so a
+            # case must exist for staff to see — amber on the first report,
+            # red once it repeats.
+            details = json.dumps({
+                "reason": reason, "occurrences_last_14_days": count, "last_message": message,
+            })
+            await db.execute(
+                "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
+                (patient_id, ESC_REASON_TEXT[reason].format(count=count), "amber", details, now)
+            )
+            await db.execute(
+                "UPDATE patients SET risk_level='amber' WHERE id=? AND risk_level<>'red'", (patient_id,)
+            )
+            escalation_created = True
 
     return bot_reply, reason, escalation_created
 
@@ -412,10 +467,19 @@ async def process_message(patient_id: int, message: str, db: Connection):
     if detect_emergency(message):
         first = display_first_name(name)
         bot_reply = (
-            f"⚠️ {first}, these symptoms can be serious. Please go to the nearest clinic or "
-            f"hospital right away, or ask someone to help you get there now. "
+            f"⚠️ {first}, these symptoms can be serious. Please go to the nearest hospital "
+            f"right away, or call 112 or 193 for an ambulance. Ask someone to help you if you can. "
             f"I've marked this urgent for your care team. Please keep your phone close. 🏥"
         )
+        # Keep any reading sent with the symptoms ("190/120 and chest pain") —
+        # staff need it, and the emergency reply above takes precedence.
+        systolic, diastolic = parse_bp(message)
+        if systolic is not None:
+            risk_level, note = assess_bp_risk(systolic, diastolic)
+            await db.execute(
+                "INSERT INTO checkin_logs (patient_id, reading_type, reading_value, risk_level, ai_note, created_at) VALUES (?,?,?,?,?,?)",
+                (patient_id, "bp", f"{systolic}/{diastolic}", risk_level, note, now)
+            )
         reason = None
         if category == "dental":
             _, category_reply = assess_dental_concern(message)
@@ -550,29 +614,9 @@ async def process_message(patient_id: int, message: str, db: Connection):
     elif current_flow in ("checkin_bp", "awaiting_bp"):
         systolic, diastolic = parse_bp(message)
         if systolic is not None:
-            risk_level, note = assess_bp_risk(systolic, diastolic)
-            await db.execute(
-                "INSERT INTO checkin_logs (patient_id, reading_type, reading_value, risk_level, ai_note, created_at) VALUES (?,?,?,?,?,?)",
-                (patient_id, "bp", f"{systolic}/{diastolic}", risk_level, note, now)
+            bot_reply, escalation_created = await _record_bp_reading(
+                patient_id, systolic, diastolic, message, db, now
             )
-            await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk_level, patient_id))
-            bot_reply = note
-
-            if risk_level == "red":
-                details = json.dumps({"reading": f"{systolic}/{diastolic}", "target": "below 140/90", "message": message})
-                await db.execute(
-                    "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
-                    (patient_id, f"Dangerously high BP reading: {systolic}/{diastolic}", "red", details, now)
-                )
-                escalation_created = True
-            elif risk_level == "amber":
-                details = json.dumps({"reading": f"{systolic}/{diastolic}", "context": "Above target"})
-                await db.execute(
-                    "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
-                    (patient_id, f"Elevated BP reading: {systolic}/{diastolic}", "amber", details, now)
-                )
-                escalation_created = True
-
             new_flow = "idle"
         else:
             bot_reply = "Please send your blood pressure as two numbers, like 128/82."
@@ -583,20 +627,9 @@ async def process_message(patient_id: int, message: str, db: Connection):
         # Check if it looks like a BP reading
         systolic, diastolic = parse_bp(message)
         if systolic:
-            risk_level, note = assess_bp_risk(systolic, diastolic)
-            await db.execute(
-                "INSERT INTO checkin_logs (patient_id, reading_type, reading_value, risk_level, ai_note, created_at) VALUES (?,?,?,?,?,?)",
-                (patient_id, "bp", f"{systolic}/{diastolic}", risk_level, note, now)
+            bot_reply, escalation_created = await _record_bp_reading(
+                patient_id, systolic, diastolic, message, db, now
             )
-            await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk_level, patient_id))
-            bot_reply = note
-            if risk_level == "red":
-                details = json.dumps({"reading": f"{systolic}/{diastolic}"})
-                await db.execute(
-                    "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
-                    (patient_id, f"High BP reading: {systolic}/{diastolic}", "red", details, now)
-                )
-                escalation_created = True
         elif wants_to_report_bp(message):
             # Patient says they want to share a reading but sent no numbers — prime the BP flow
             bot_reply = f"Of course, {display_first_name(name)}! 📋 Please send your reading as two numbers, like 135/86."

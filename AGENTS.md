@@ -47,9 +47,10 @@ Concretely —
 ## Stack
 
 - **Backend:** FastAPI + SQLite (via `aiosqlite`), in [backend/](backend/)
-- **LLM:** **Groq** (Llama) in [backend/services/ai.py](backend/services/ai.py) —
-  `llama-3.1-8b-instant` for per-message work, `llama-3.3-70b-versatile` for reports.
-  Override with `GROQ_FAST_MODEL` / `GROQ_REPORT_MODEL`.
+- **LLM:** **Claude** (Anthropic SDK) in [backend/services/ai.py](backend/services/ai.py) —
+  `claude-opus-5-5` at low effort for per-message work, medium effort for reports.
+  Override with `CLAUDE_FAST_MODEL` / `CLAUDE_REPORT_MODEL`. Every patient-facing
+  reply Claude writes passes `reply_is_safe()`; a blocked reply sends the template.
 - **Speech-to-text:** [backend/services/stt.py](backend/services/stt.py) — Intron Sahara,
   GhanaNLP Khaya (Twi/Ga/Ewe), Cartesia Ink, OpenAI `whisper-1`, local faster-whisper.
 - **Text-to-speech:** [backend/services/tts.py](backend/services/tts.py) — GhanaNLP Khaya
@@ -76,7 +77,7 @@ backend/             FastAPI service
   requirements.txt        Deployed deps — no faster-whisper (too large for serverless)
   requirements-local.txt  The above plus faster-whisper, for local runs + benchmark
   services/
-    ai.py              Groq integration + rule-based fallbacks (reason, BP risk, reports)
+    ai.py              Claude integration + rule-based fallbacks (reason, BP risk, reports)
     bot.py             Core conversation logic — the "brain"
     stt.py             Speech-to-text provider layer (shared with the benchmark)
     tts.py             Text-to-speech provider layer (spoken replies)
@@ -94,7 +95,7 @@ start.sh             One-command launcher (venv + uvicorn + vite)
 ## Running it
 
 ```bash
-cp .env.example .env      # add GROQ_API_KEY (optional — see below)
+cp .env.example .env      # add ANTHROPIC_API_KEY (optional — see below)
 ./start.sh                # → dashboard at localhost:5173, API at localhost:8000
 ```
 

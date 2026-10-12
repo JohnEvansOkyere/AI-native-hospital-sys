@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import logging
@@ -10,7 +11,7 @@ from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import (FastAPI, WebSocket, WebSocketDisconnect, HTTPException,
+from fastapi import (BackgroundTasks, FastAPI, WebSocket, WebSocketDisconnect, HTTPException,
                      UploadFile, File, Form, Query, Request)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -131,7 +132,7 @@ app.add_middleware(
 )
 
 
-PUBLIC_API_PATHS = {"/api/auth/login", "/api/cron/hourly"}
+PUBLIC_API_PATHS = {"/api/auth/login", "/api/cron/hourly", "/api/cron/inbound"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 SETUP_WRITE_PATHS = {"/api/auth/logout", "/api/settings/clinic", "/api/patients"}
 
@@ -615,6 +616,11 @@ class PatientCommunicationRequest(BaseModel):
     paused: Optional[bool] = None
 
 
+class PatientProfileRequest(BaseModel):
+    care_instructions: str
+    patient_context: str = ""
+
+
 @app.post("/api/patients")
 async def enroll_patient(body: EnrollRequest, request: Request):
     require_admin(request)
@@ -805,6 +811,37 @@ async def update_patient_communication(
     return patient
 
 
+@app.patch("/api/patients/{patient_id}/profile")
+async def update_patient_profile(
+    patient_id: int, body: PatientProfileRequest, request: Request,
+):
+    staff = request.state.staff
+    care_instructions = body.care_instructions.strip()
+    patient_context = body.patient_context.strip()
+    if len(care_instructions) > 2000 or len(patient_context) > 1000:
+        raise HTTPException(status_code=400, detail="Care plan or patient context is too long")
+    now = datetime.now().isoformat()
+    async with db_store.connect() as db:
+        cursor = await db.execute("SELECT id FROM patients WHERE id=?", (patient_id,))
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Patient not found")
+        await db.execute(
+            """UPDATE patients SET care_instructions=?, patient_context=?,
+                      profile_updated_at=?, profile_updated_by=? WHERE id=?""",
+            (care_instructions, patient_context, now, staff["name"], patient_id),
+        )
+        # Record that the profile changed without duplicating sensitive note text
+        # into the audit log.
+        await record_audit(
+            db, staff, "patient.profile_updated", "patient", patient_id,
+            {"fields": ["care_instructions", "patient_context"]},
+        )
+        await db.commit()
+        patient = await get_patient_full(patient_id, db)
+    await manager.broadcast_all({"type": "patient_updated", "patient": patient})
+    return patient
+
+
 # ── Routes: messages ──────────────────────────────────────────────────────────
 
 @app.get("/api/patients/{patient_id}/messages")
@@ -904,8 +941,57 @@ async def speak_reply(text: str, language: str, accept: tuple):
     return await tts.synthesize(text, language=language, accept=accept), ""
 
 
+async def _alert_care_team(db, escalation_id: int, patient: dict) -> None:
+    """Set a new case's due time, notify the staff alert phone, and broadcast it.
+
+    The alert goes out as an approved template when one is configured;
+    otherwise the case is honestly labelled dashboard_only.
+    """
+    cursor = await db.execute(
+        "SELECT id, reason, risk_level, details, created_at FROM escalations WHERE id=?",
+        (escalation_id,),
+    )
+    esc = await cursor.fetchone()
+    if not esc:
+        return
+    due_at = (datetime.now() + timedelta(hours=4 if esc[2] == "red" else 24)).isoformat()
+    settings = await (await db.execute(
+        "SELECT escalation_phone FROM clinic_settings WHERE id=1"
+    )).fetchone()
+    alert_phone = (settings[0] if settings else "") or ""
+    alert_template = os.getenv("META_STAFF_ALERT_TEMPLATE", "").strip()
+    if alert_phone and alert_template:
+        notification = await whatsapp.send_template(
+            alert_phone, alert_template,
+            os.getenv("META_STAFF_ALERT_TEMPLATE_LANGUAGE", "en_US"),
+            [patient["name"], esc[2].upper(), esc[1][:120]],
+        )
+        notification_status = "accepted" if notification.delivered else "failed"
+    else:
+        notification = whatsapp.SendResult(
+            False, error="Staff alert phone or approved template is not configured",
+        )
+        notification_status = "dashboard_only"
+    await db.execute(
+        """UPDATE escalations SET due_at=?, notification_status=?,
+                  notification_error=?, notification_message_id=? WHERE id=?""",
+        (due_at, notification_status, notification.error,
+         notification.message_id, esc[0]),
+    )
+    await db.commit()
+    esc_data = {
+        "id": esc[0], "reason": esc[1], "risk_level": esc[2],
+        "details": json.loads(esc[3]), "created_at": esc[4],
+        "patient_id": patient["id"], "patient_name": patient["name"],
+        "assigned_to": None, "assigned_to_name": None,
+        "acknowledged_at": None, "due_at": due_at,
+        "notification_status": notification_status,
+    }
+    await manager.broadcast_all({"type": "escalation", "escalation": esc_data})
+
+
 async def ingest_patient_message(patient_id: int, text: str, voice: dict | None = None,
-                                 channel: str = "simulator"):
+                                 channel: str = "simulator", external_message_id: str = ""):
     """Run one inbound patient turn: log it, let the bot act, broadcast everything.
 
     Every transport lands here — the simulator, WhatsApp, and anything added
@@ -922,11 +1008,11 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
         # Log inbound
         inbound_id = await insert_returning_id(
             db,
-            "INSERT INTO messages (patient_id, direction, body, created_at, channel, audio_file, stt_provider, stt_language, stt_latency_ms) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO messages (patient_id, direction, body, created_at, channel, audio_file, stt_provider, stt_language, stt_latency_ms, external_message_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (patient_id, "inbound", text, now, channel, voice.get("audio_file", ""),
              voice.get("stt_provider", ""), voice.get("stt_language", ""),
-             voice.get("stt_latency_ms", 0))
+             voice.get("stt_latency_ms", 0), external_message_id)
         )
         await db.commit()
 
@@ -1048,18 +1134,20 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
         # Reply over the transport the patient actually used. The dashboard sees
         # the message either way via the broadcast above.
         if channel == "whatsapp":
-            # Text first, then the voice note. The text is the durable record
-            # and stays readable, searchable and forwardable to a family member;
-            # the audio is what the patient who can't read it needs. Set
-            # TTS_WHATSAPP_SEND_TEXT=0 for voice-only replies.
-            # Voice-only still falls back to text when synthesis failed —
-            # otherwise a dead TTS key means the patient gets nothing at all.
-            if not (spoken and spoken.ok) or os.getenv("TTS_WHATSAPP_SEND_TEXT", "1") != "0":
-                await whatsapp.send_text(p["phone"], bot_reply)
+            # Mirror the patient's modality: a voice note gets a voice note
+            # only, a typed message gets text only. The English text is still
+            # the stored record on the dashboard. TTS_WHATSAPP_SEND_TEXT=1 also
+            # sends the text alongside the audio.
+            # Text is the fallback whenever the voice note didn't go out —
+            # synthesis failed or Meta rejected the upload — otherwise a dead
+            # TTS key or a media error means the patient gets nothing at all.
+            audio_sent = False
             if spoken and spoken.ok:
-                await whatsapp.send_audio(
+                audio_sent = await whatsapp.send_audio(
                     p["phone"], spoken.audio, spoken.mime, f"reply{spoken.suffix}"
                 )
+            if not audio_sent or os.getenv("TTS_WHATSAPP_SEND_TEXT", "0") == "1":
+                await whatsapp.send_text(p["phone"], bot_reply)
         await manager.broadcast(patient_id, {"type": "patient_updated", "patient": p})
         await manager.broadcast_all({"type": "patient_updated", "patient": p})
 
@@ -1072,45 +1160,12 @@ async def ingest_patient_message(patient_id: int, text: str, voice: dict | None 
 
         if escalation_created:
             cursor = await db.execute(
-                "SELECT id, reason, risk_level, details, created_at FROM escalations WHERE patient_id=? ORDER BY id DESC LIMIT 1",
+                "SELECT id FROM escalations WHERE patient_id=? ORDER BY id DESC LIMIT 1",
                 (patient_id,)
             )
             esc = await cursor.fetchone()
             if esc:
-                due_at = (datetime.now() + timedelta(hours=4 if esc[2] == "red" else 24)).isoformat()
-                settings = await (await db.execute(
-                    "SELECT escalation_phone FROM clinic_settings WHERE id=1"
-                )).fetchone()
-                alert_phone = (settings[0] if settings else "") or ""
-                alert_template = os.getenv("META_STAFF_ALERT_TEMPLATE", "").strip()
-                if alert_phone and alert_template:
-                    notification = await whatsapp.send_template(
-                        alert_phone, alert_template,
-                        os.getenv("META_STAFF_ALERT_TEMPLATE_LANGUAGE", "en_US"),
-                        [p["name"], esc[2].upper(), esc[1][:120]],
-                    )
-                    notification_status = "accepted" if notification.delivered else "failed"
-                else:
-                    notification = whatsapp.SendResult(
-                        False, error="Staff alert phone or approved template is not configured",
-                    )
-                    notification_status = "dashboard_only"
-                await db.execute(
-                    """UPDATE escalations SET due_at=?, notification_status=?,
-                              notification_error=?, notification_message_id=? WHERE id=?""",
-                    (due_at, notification_status, notification.error,
-                     notification.message_id, esc[0]),
-                )
-                await db.commit()
-                esc_data = {
-                    "id": esc[0], "reason": esc[1], "risk_level": esc[2],
-                    "details": json.loads(esc[3]), "created_at": esc[4],
-                    "patient_id": patient_id, "patient_name": p["name"],
-                    "assigned_to": None, "assigned_to_name": None,
-                    "acknowledged_at": None, "due_at": due_at,
-                    "notification_status": notification_status,
-                }
-                await manager.broadcast_all({"type": "escalation", "escalation": esc_data})
+                await _alert_care_team(db, esc[0], p)
 
         return {"inbound": inbound_msg, "reply": outbound_msg, "escalation_created": escalation_created}
 
@@ -1259,35 +1314,97 @@ async def send_patient_voice_note(
 # the sender to a patient, turn voice notes into text, and hand off to
 # ingest_patient_message(). No conversation logic lives here.
 
-# Meta retries deliveries aggressively. This claim lives in the durable store,
-# not process memory, because separate serverless instances see the same retry.
-async def _claim_whatsapp_event(message_id: str) -> bool:
-    if not message_id:
-        return True
+# Inbound WhatsApp messages go through a durable queue in our own database.
+# The webhook only stores each message and returns 200, so Meta never waits on
+# speech-to-text, the LLM or text-to-speech. Processing starts as a background
+# task straight after the response, and /api/cron/inbound sweeps up anything
+# that task missed — including a function killed mid-message. Dedup also lives
+# here, not in process memory, because separate serverless instances see the
+# same Meta retry.
+INBOUND_MAX_ATTEMPTS = 3
+# Wall-clock budget for one message. Past it, the patient gets the safety reply
+# instead of waiting on a hung provider.
+INBOUND_BUDGET_S = float(os.getenv("INBOUND_BUDGET_S", "120"))
+# A 'processing' claim older than this belongs to a function that died.
+INBOUND_STALE_AFTER = timedelta(seconds=INBOUND_BUDGET_S + 120)
+
+
+async def _enqueue_whatsapp_message(message: dict) -> str:
+    """Store an inbound message durably. Returns its id, or "" for a duplicate."""
+    message_id = message.get("id") or f"local-{uuid.uuid4().hex}"
     async with db_store.connect() as db:
         cursor = await db.execute(
             """INSERT INTO inbound_events
-               (external_message_id, status, received_at) VALUES (?, 'processing', ?)
+               (external_message_id, status, received_at, payload, attempts)
+               VALUES (?, 'queued', ?, ?, 0)
                ON CONFLICT(external_message_id) DO NOTHING""",
-            (message_id, datetime.now().isoformat()),
+            (message_id, datetime.now().isoformat(), json.dumps(message)),
         )
         await db.commit()
-        if cursor.rowcount == 1:
-            return True
-        existing = await (await db.execute(
-            "SELECT status FROM inbound_events WHERE external_message_id=?", (message_id,),
+    return message_id if cursor.rowcount == 1 else ""
+
+
+async def _claim_inbound_event(message_id: str) -> Optional[tuple[dict, int]]:
+    """Atomically take a queued (or abandoned) event. Returns (message, attempt)."""
+    now = datetime.now()
+    async with db_store.connect() as db:
+        cursor = await db.execute(
+            """UPDATE inbound_events SET status='processing', started_at=?, attempts=attempts+1
+               WHERE external_message_id=? AND payload<>'' AND
+                 (status='queued' OR (status='processing' AND started_at<?))""",
+            (now.isoformat(), message_id, (now - INBOUND_STALE_AFTER).isoformat()),
+        )
+        await db.commit()
+        if cursor.rowcount != 1:
+            return None
+        row = await (await db.execute(
+            "SELECT payload, attempts FROM inbound_events WHERE external_message_id=?",
+            (message_id,),
         )).fetchone()
-        if existing and existing[0] in {"failed", "processing"}:
-            retry = await db.execute(
-                """UPDATE inbound_events SET status='processing', error='', received_at=?
-                   WHERE external_message_id=? AND
-                     (status='failed' OR (status='processing' AND received_at<?))""",
-                (datetime.now().isoformat(), message_id,
-                 (datetime.now() - timedelta(minutes=5)).isoformat()),
-            )
-            await db.commit()
-            return retry.rowcount == 1
-        return False
+    return json.loads(row[0]), int(row[1])
+
+
+async def _already_ingested(message_id: str) -> bool:
+    async with db_store.connect() as db:
+        row = await (await db.execute(
+            "SELECT 1 FROM messages WHERE external_message_id=? AND direction='inbound' LIMIT 1",
+            (message_id,),
+        )).fetchone()
+    return row is not None
+
+
+async def _run_inbound_event(message_id: str) -> dict:
+    """Process one queued message exactly once from the patient's point of view.
+
+    A retry after a killed run must not process the message again if it got as
+    far as being recorded — that would double-log doses and open duplicate
+    cases. In that case, and once attempts run out, the patient gets the safety
+    reply and the care team a red case instead.
+    """
+    claimed = await _claim_inbound_event(message_id)
+    if claimed is None:
+        return {"status": "not_claimed"}
+    message, attempt = claimed
+    if attempt > 1 and (attempt > INBOUND_MAX_ATTEMPTS or await _already_ingested(message_id)):
+        sender = message.get("from", "")
+        patient = await _patient_by_phone(sender) if sender else None
+        await _handle_processing_failure(
+            sender, patient, "", message.get("type", ""),
+            RuntimeError(f"Abandoned after attempt {attempt - 1}"),
+        )
+        await _finish_whatsapp_event(message_id, "failed", f"abandoned after attempt {attempt - 1}")
+        return {"status": "abandoned"}
+    try:
+        return await asyncio.wait_for(_process_whatsapp_message(message), INBOUND_BUDGET_S)
+    except asyncio.TimeoutError:
+        logging.getLogger(__name__).error("Inbound message %s exceeded %ss", message_id, INBOUND_BUDGET_S)
+        sender = message.get("from", "")
+        patient = await _patient_by_phone(sender) if sender else None
+        await _handle_processing_failure(
+            sender, patient, "", message.get("type", ""), TimeoutError("processing budget exceeded"),
+        )
+        await _finish_whatsapp_event(message_id, "failed", "processing budget exceeded")
+        return {"status": "timed_out"}
 
 
 async def _finish_whatsapp_event(message_id: str, status: str = "processed", error: str = "") -> None:
@@ -1376,14 +1493,65 @@ async def whatsapp_verify(
         raise HTTPException(status_code=403, detail="Verification token mismatch")
 
 
+PROCESSING_FAILED_REPLY = (
+    "Sorry, something went wrong on our side with your last message. "
+    "Your care team has been told and will contact you. "
+    "If this is urgent, please go to the nearest hospital now, "
+    "or call 112 or 193 for an ambulance."
+)
+
+
+async def _handle_processing_failure(sender: str, patient: Optional[dict], text: str,
+                                     msg_type: str, exc: Exception) -> None:
+    """Never leave a patient in silence when their message could not be handled.
+
+    We can't know what an unprocessed message said — it may have been an
+    emergency — so the patient gets a fixed safety reply with emergency
+    numbers, and the care team gets a red case to review it by hand. Each step
+    is guarded on its own: the database may be the thing that failed, and the
+    patient's reply must not depend on it.
+    """
+    log = logging.getLogger(__name__)
+    try:
+        await whatsapp.send_text(sender, PROCESSING_FAILED_REPLY)
+    except Exception:
+        log.exception("Could not send processing-failure reply to %s", whatsapp.mask_phone(sender))
+
+    if not patient:
+        return
+    try:
+        async with db_store.connect() as db:
+            details = json.dumps({
+                "reason": "processing_failed",
+                "message_type": msg_type,
+                "last_message": text,
+                "error": type(exc).__name__,
+            })
+            escalation_id = await insert_returning_id(
+                db,
+                "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) "
+                "VALUES (?,?,?,?,?)",
+                (patient["id"],
+                 "Message could not be processed — read the conversation and contact the patient",
+                 "red", details, datetime.now().isoformat()),
+            )
+            await db.execute("UPDATE patients SET risk_level='red' WHERE id=?", (patient["id"],))
+            await db.commit()
+            full = await get_patient_full(patient["id"], db)
+            await _alert_care_team(db, escalation_id, full)
+            await manager.broadcast_all({"type": "patient_updated", "patient": full})
+    except Exception:
+        log.exception("Could not open a case for a failed message from patient %s", patient["id"])
+
+
 async def _process_whatsapp_message(message: dict) -> dict:
-    """Process one item from a possibly batched Meta webhook payload."""
+    """Process one stored inbound message (claimed by _run_inbound_event)."""
     message_id = message.get("id", "")
     sender = message.get("from", "")
     msg_type = message.get("type", "")
 
-    if not await _claim_whatsapp_event(message_id):
-        return {"status": "duplicate_ignored"}
+    patient = None
+    inbound_text = ""
     try:
         patient = await _patient_by_phone(sender)
         if patient is None:
@@ -1402,7 +1570,10 @@ async def _process_whatsapp_message(message: dict) -> dict:
             if not text:
                 await _finish_whatsapp_event(message_id)
                 return {"status": "empty"}
-            await ingest_patient_message(patient["id"], text, channel="whatsapp")
+            inbound_text = text
+            await ingest_patient_message(
+                patient["id"], text, channel="whatsapp", external_message_id=message_id,
+            )
             await _finish_whatsapp_event(message_id)
             return {"status": "ok"}
 
@@ -1428,13 +1599,14 @@ async def _process_whatsapp_message(message: dict) -> dict:
                 await _finish_whatsapp_event(message_id)
                 return {"status": "stt_failed", "error": result.error}
 
+            inbound_text = result.text
             await ingest_patient_message(
                 patient["id"], result.text,
                 voice={
                     "audio_file": stored.name, "stt_provider": result.provider,
                     "stt_language": language, "stt_latency_ms": result.latency_ms,
                 },
-                channel="whatsapp",
+                channel="whatsapp", external_message_id=message_id,
             )
             await _finish_whatsapp_event(message_id)
             return {"status": "ok"}
@@ -1447,13 +1619,18 @@ async def _process_whatsapp_message(message: dict) -> dict:
         return {"status": "unsupported_type"}
     except Exception as exc:
         logging.getLogger(__name__).exception("WhatsApp message processing failed")
+        await _handle_processing_failure(sender, patient, inbound_text, msg_type, exc)
         await _finish_whatsapp_event(message_id, "failed", f"{type(exc).__name__}: {exc}")
         return {"status": "processing_failed"}
 
 
 @app.post("/webhook/whatsapp")
-async def whatsapp_receive(request: Request):
-    """Validate and process every message and receipt in a Meta webhook batch."""
+async def whatsapp_receive(request: Request, background: BackgroundTasks):
+    """Validate a Meta webhook batch, store its messages, and return at once.
+
+    Delivery receipts are quick database updates and are applied inline.
+    Messages are queued and processed after the response is sent.
+    """
     raw = await request.body()
     if not whatsapp.verify_signature(raw, request.headers.get("x-hub-signature-256")):
         raise HTTPException(status_code=403, detail="Invalid webhook signature")
@@ -1467,12 +1644,47 @@ async def whatsapp_receive(request: Request):
     except Exception:
         return {"status": "ignored"}
     updated = 0
-    results = []
+    queued = duplicates = 0
     for value in values:
         updated += await _record_whatsapp_statuses(value.get("statuses") or [])
         for message in value.get("messages") or []:
-            results.append(await _process_whatsapp_message(message))
-    return {"status": "processed", "messages": results, "delivery_updates": updated}
+            message_id = await _enqueue_whatsapp_message(message)
+            if message_id:
+                queued += 1
+                background.add_task(_run_inbound_event, message_id)
+            else:
+                duplicates += 1
+    return {"status": "accepted", "queued": queued, "duplicates": duplicates,
+            "delivery_updates": updated}
+
+
+@app.get("/api/cron/inbound")
+async def sweep_inbound(request: Request):
+    """Every minute: process queued messages the background task did not reach,
+    and recover messages whose function was killed mid-way."""
+    expected = os.getenv("CRON_SECRET", "")
+    supplied = request.headers.get("authorization", "")
+    if not expected or not secrets.compare_digest(supplied, f"Bearer {expected}"):
+        raise HTTPException(status_code=401, detail="Invalid cron authorization")
+
+    now = datetime.now()
+    async with db_store.connect() as db:
+        rows = await (await db.execute(
+            """SELECT external_message_id FROM inbound_events
+               WHERE payload<>'' AND (
+                 (status='queued' AND received_at<?) OR
+                 (status='processing' AND started_at<?))
+               ORDER BY received_at LIMIT 25""",
+            # Give the background task a head start before the sweep competes.
+            ((now - timedelta(seconds=30)).isoformat(), (now - INBOUND_STALE_AFTER).isoformat()),
+        )).fetchall()
+    results = []
+    deadline = now + timedelta(seconds=240)
+    for (message_id,) in rows:
+        if datetime.now() > deadline:
+            break
+        results.append((await _run_inbound_event(message_id))["status"])
+    return {"found": len(rows), "results": results}
 
 
 @app.get("/api/voice/{filename}")

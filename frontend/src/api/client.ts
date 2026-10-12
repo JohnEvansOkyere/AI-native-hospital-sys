@@ -55,6 +55,9 @@ export interface Patient {
   category: 'dental' | 'eye' | 'chronic' | 'general'
   service_type: string
   care_instructions: string
+  patient_context: string
+  profile_updated_at?: string | null
+  profile_updated_by?: string
   next_follow_up: string
   recall_date: string
   enrolled_at: string
@@ -290,6 +293,12 @@ export const api = {
     communication_opt_in: boolean; paused: boolean
   }>): Promise<Patient> {
     return request(`/patients/${id}/communication`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
+  },
+
+  async updatePatientProfile(id: number, data: { care_instructions: string; patient_context: string }): Promise<Patient> {
+    return request(`/patients/${id}/profile`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
     })
   },

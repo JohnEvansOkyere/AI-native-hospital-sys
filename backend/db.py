@@ -369,6 +369,9 @@ CREATE TABLE IF NOT EXISTS patients (
     category TEXT NOT NULL DEFAULT 'chronic',
     service_type TEXT DEFAULT '',
     care_instructions TEXT DEFAULT '',
+    patient_context TEXT NOT NULL DEFAULT '',
+    profile_updated_at TEXT,
+    profile_updated_by TEXT DEFAULT '',
     next_follow_up TEXT DEFAULT '',
     recall_date TEXT DEFAULT '',
     reminder_time TEXT NOT NULL DEFAULT '08:00',
@@ -493,7 +496,10 @@ CREATE TABLE IF NOT EXISTS inbound_events (
     status TEXT NOT NULL DEFAULT 'processing',
     received_at TEXT NOT NULL,
     processed_at TEXT,
-    error TEXT DEFAULT ''
+    error TEXT DEFAULT '',
+    payload TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS reminder_dispatches (
@@ -847,6 +853,9 @@ async def init_db():
             "category": "TEXT NOT NULL DEFAULT 'chronic'",
             "service_type": "TEXT DEFAULT ''",
             "care_instructions": "TEXT DEFAULT ''",
+            "patient_context": "TEXT NOT NULL DEFAULT ''",
+            "profile_updated_at": "TEXT",
+            "profile_updated_by": "TEXT DEFAULT ''",
             "next_follow_up": "TEXT DEFAULT ''",
             "recall_date": "TEXT DEFAULT ''",
             "preferred_language": "TEXT NOT NULL DEFAULT 'en'",
@@ -917,6 +926,24 @@ async def init_db():
         for column, definition in new_escalation_columns.items():
             if column not in existing_escalation_columns:
                 await db.execute(f"ALTER TABLE escalations ADD COLUMN {column} {definition}")
+        # Durable inbound queue (migration 003 on PostgreSQL).
+        existing_inbound_columns = {
+            row[1] for row in await (await db.execute("PRAGMA table_info(inbound_events)")).fetchall()
+        }
+        new_inbound_columns = {
+            "payload": "TEXT NOT NULL DEFAULT ''",
+            "attempts": "INTEGER NOT NULL DEFAULT 0",
+            "started_at": "TEXT",
+        }
+        for column, definition in new_inbound_columns.items():
+            if column not in existing_inbound_columns:
+                await db.execute(f"ALTER TABLE inbound_events ADD COLUMN {column} {definition}")
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_inbound_events_status ON inbound_events(status, received_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_external_id ON messages(external_message_id)"
+        )
         await db.execute(
             """UPDATE escalations
                SET due_at=strftime('%Y-%m-%dT%H:%M:%S', created_at,

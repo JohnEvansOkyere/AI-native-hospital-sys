@@ -54,6 +54,9 @@ export function LoginScreen({ onSignedIn }: { onSignedIn: (session: AuthSession)
             {loading && <Loader2 size={15} className="animate-spin" />}
             {loading ? 'Signing in…' : 'Sign in securely'}
           </button>
+          <p className="mt-3 text-center text-xs text-slate-500">
+            Forgot your password? Ask your clinic administrator to reset it.
+          </p>
         </form>
       </div>
     </main>

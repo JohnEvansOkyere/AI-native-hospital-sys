@@ -473,8 +473,10 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
                     // Inbound: the patient's voice note, played above what the
                     // model heard. Keeping both visible is the whole point — the
                     // gap between them is what the benchmark measures.
-                    // Outbound: the agent's spoken reply, above the same words
-                    // in text. Either way, provenance travels with the audio.
+                    // Outbound: the agent's spoken reply, shown audio-only just
+                    // as the patient receives it on WhatsApp. The text record
+                    // stays on the clinician timeline. Provenance travels with
+                    // the audio either way.
                     <div className="mb-1.5">
                       <audio controls src={api.voiceNoteUrl(msg.audio_file)} className="h-8 w-full max-w-[220px]" />
                       <div className="mt-1 flex items-center gap-1 flex-wrap text-[10px] text-slate-500">
@@ -497,7 +499,7 @@ function WhatsAppChat({ patient, onUpdate }: { patient: Patient; onUpdate: () =>
                       </div>
                     </div>
                   )}
-                  {msg.body}
+                  {!(isOut && msg.audio_file) && msg.body}
                   {msg.reason && msg.reason !== 'null' && (
                     <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full font-medium
                       ${msg.reason === 'cost' ? 'bg-red-100 text-red-600' :
@@ -608,10 +610,35 @@ function PatientCard({ patient, selected, onClick }: { patient: Patient; selecte
 
 // ── Patient Detail ─────────────────────────────────────────────────────────
 
-function PatientDetail({ patient }: { patient: Patient }) {
+function PatientDetail({ patient, onUpdate }: { patient: Patient; onUpdate: () => void }) {
   const isDental = patient.category === 'dental'
   const isFollowUp = patient.category !== 'chronic'
   const last14 = (isFollowUp ? patient.care_logs : patient.adherence_logs).slice(0, 14).reverse()
+  const [carePlan, setCarePlan] = useState(patient.care_instructions || '')
+  const [patientContext, setPatientContext] = useState(patient.patient_context || '')
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [profileSaved, setProfileSaved] = useState(false)
+
+  useEffect(() => {
+    setCarePlan(patient.care_instructions || '')
+    setPatientContext(patient.patient_context || '')
+  }, [patient.id, patient.profile_updated_at, patient.care_instructions, patient.patient_context])
+
+  const saveProfile = async () => {
+    setProfileSaving(true)
+    setProfileError('')
+    setProfileSaved(false)
+    try {
+      await api.updatePatientProfile(patient.id, { care_instructions: carePlan, patient_context: patientContext })
+      setProfileSaved(true)
+      onUpdate()
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : 'Could not save patient profile')
+    } finally {
+      setProfileSaving(false)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -661,6 +688,33 @@ function PatientDetail({ patient }: { patient: Patient }) {
           </div>
         </div>
       </div>
+
+      <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700">Care profile for follow-up</h3>
+            <p className="text-xs text-slate-500 mt-1">Keep this brief. The assistant may use it when replying to this patient.</p>
+          </div>
+          {patient.profile_updated_at && (
+            <span className="text-[11px] text-slate-400 text-right">Updated by {patient.profile_updated_by || 'clinic staff'}<br />{formatDate(patient.profile_updated_at)}</span>
+          )}
+        </div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">Clinic care instructions</label>
+        <textarea value={carePlan} onChange={e => { setCarePlan(e.target.value); setProfileSaved(false) }} maxLength={2000} rows={3}
+          placeholder="Instructions approved by the care team" className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+        <label className="block text-xs font-medium text-slate-600 mt-3 mb-1">Patient-reported context</label>
+        <textarea value={patientContext} onChange={e => { setPatientContext(e.target.value); setProfileSaved(false) }} maxLength={1000} rows={2}
+          placeholder="For example: says transport cost makes clinic visits difficult" className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+        <p className="text-[11px] text-slate-400 mt-1">Treat this as reported information, not a verified clinical fact. Avoid unnecessary sensitive details.</p>
+        <div className="flex items-center justify-between mt-3">
+          <span className="text-xs text-emerald-700" role="status">{profileSaved ? 'Profile saved' : ''}</span>
+          <button onClick={() => void saveProfile()} disabled={profileSaving || (carePlan === (patient.care_instructions || '') && patientContext === (patient.patient_context || ''))}
+            className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+            {profileSaving ? 'Saving…' : 'Save care profile'}
+          </button>
+        </div>
+        {profileError && <p className="mt-2 text-xs text-red-600" role="alert">{profileError}</p>}
+      </section>
 
       {/* Category-specific care history */}
       <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
@@ -1330,7 +1384,7 @@ export default function App() {
               </div>
             )}
             {selected ? (
-              <PatientDetail patient={selected} />
+              <PatientDetail patient={selected} onUpdate={handlePatientUpdate} />
             ) : (
               <div className="flex flex-col items-center justify-center h-64 text-slate-300">
                 <MessageCircle size={40} />
