@@ -57,7 +57,11 @@ def test_routine_messages_are_not_emergencies(message):
     ((130, 100), "high", "red"),
     ((159, 99), "elevated", "amber"),
     ((140, 80), "elevated", "amber"),
-    ((139, 89), "normal", "green"),
+    ((139, 90), "elevated", "amber"),
+    ((139, 89), "high_normal", "green"),
+    ((130, 70), "high_normal", "green"),
+    ((120, 85), "high_normal", "green"),
+    ((129, 84), "normal", "green"),
     ((120, 80), "normal", "green"),
     ((90, 60), "normal", "green"),
     ((89, 60), "low", "amber"),
@@ -73,6 +77,17 @@ def test_bp_bands(reading, band, risk):
 def test_urgent_bp_replies_name_emergency_numbers(reading):
     note = assess_bp_risk(*reading)[1]
     assert "112" in note and "193" in note
+
+
+def test_bp_reply_names_the_range_of_each_number():
+    note = assess_bp_risk(139, 90)[1]
+    assert "top number (139) is okay, but on the high side" in note
+    assert "bottom number (90) is a bit high" in note
+
+
+def test_single_elevated_reading_does_not_claim_care_team_told():
+    assert "care team" not in assess_bp_risk(145, 85)[1]
+    assert "care team" in assess_bp_risk(145, 85, repeated=True)[1]
 
 
 def test_low_bp_is_never_praised():
@@ -293,3 +308,11 @@ def test_eye_concerns(message, risk):
 ])
 def test_intent_rule_respects_denied_symptoms(message, intent):
     assert classify_intent_rule(message) == intent
+
+
+def test_reading_given_as_format_example_is_not_a_judgement():
+    from services.ai import reply_is_safe
+    assert reply_is_safe("Send me the two numbers when you can (e.g., 130/85).")
+    assert reply_is_safe("Please send it like 135/86.")
+    assert not reply_is_safe("Your 130/85 is fine.")
+    assert not reply_is_safe("e.g. 130/85 — your blood pressure is fine")

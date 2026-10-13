@@ -2,12 +2,12 @@ import json
 from datetime import date, datetime, timedelta
 from typing import Optional
 from db import Connection
-from services.appointments import handle_appointment_turn
+from services.appointments import booking_reprompt, handle_appointment_turn, is_side_question
 
 from services.ai import (
-    detect_reason_ai, detect_reason_rule, generate_bot_reply,
-    parse_bp, assess_bp_risk, bp_band, BP_BAND_REASON, is_affirmative,
-    classify_intent, generate_assistant_reply, detect_emergency,
+    detect_reason_ai, detect_reason_rule, barrier_override, generate_bot_reply,
+    parse_bp, assess_bp_risk, bp_band, BP_BAND_REASON, ELEVATED_ESCALATE_AT, is_affirmative,
+    classify_intent, classify_intent_rule, generate_assistant_reply, detect_emergency, MISS_INDICATORS,
     wants_to_report_bp, assess_dental_concern, assess_eye_concern, assess_general_concern,
     display_first_name,
     generate_care_assistant_reply,
@@ -116,36 +116,129 @@ ESC_REASON_TEXT = {
 }
 
 
+RISK_ORDER = {"green": 0, "amber": 1, "red": 2}
+
+
+async def _refresh_risk(patient_id: int, db: Connection) -> str:
+    """Patient risk = the worst open case, as when staff resolve one (main.py).
+    A later calm reading or a good streak must never clear a red patient while
+    their case is still open."""
+    cursor = await db.execute(
+        "SELECT risk_level FROM escalations WHERE patient_id=? AND resolved=0", (patient_id,)
+    )
+    levels = [r[0] for r in await cursor.fetchall()]
+    risk = max(levels, key=lambda r: RISK_ORDER.get(r, 0), default="green")
+    await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk, patient_id))
+    return risk
+
+
+async def _elevated_count(patient_id: int, db: Connection) -> int:
+    """Earlier readings at elevated or worse in the last 14 days."""
+    cursor = await db.execute(
+        "SELECT reading_value FROM checkin_logs WHERE patient_id=? AND reading_type='bp' AND created_at>?",
+        (patient_id, (date.today() - timedelta(days=14)).isoformat())
+    )
+    count = 0
+    for (value,) in await cursor.fetchall():
+        systolic, diastolic = parse_bp(value or "")
+        if systolic is not None and bp_band(systolic, diastolic) in ("elevated", "high", "crisis"):
+            count += 1
+    return count
+
+
 async def _record_bp_reading(patient_id: int, systolic: int, diastolic: int,
                              message: str, db: Connection, now: str) -> tuple[str, bool]:
-    """Log a BP reading, set risk, and open a case for anything outside normal.
+    """Log a BP reading and open a case for anything outside the target range.
 
     One path for the check-in flow and free text, so a reading gets the same
     treatment however the patient sends it. Returns (reply, escalation_created).
     """
-    risk_level, note = assess_bp_risk(systolic, diastolic)
     band = bp_band(systolic, diastolic)
     reading = f"{systolic}/{diastolic}"
+    count = await _elevated_count(patient_id, db) + 1 if band == "elevated" else 0
+    repeated = count >= ELEVATED_ESCALATE_AT
+    risk_level, note = assess_bp_risk(systolic, diastolic, repeated=repeated)
     await db.execute(
         "INSERT INTO checkin_logs (patient_id, reading_type, reading_value, risk_level, ai_note, created_at) VALUES (?,?,?,?,?,?)",
         (patient_id, "bp", reading, risk_level, note, now)
     )
-    await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk_level, patient_id))
-    if band not in BP_BAND_REASON:
-        return note, False
-    details = json.dumps({"reading": reading, "band": band, "target": "below 140/90", "message": message})
-    await db.execute(
-        "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
-        (patient_id, BP_BAND_REASON[band].format(reading=reading), risk_level, details, now)
+
+    escalate = band in ("crisis", "high", "low") or (band == "elevated" and repeated)
+    if band == "elevated" and repeated:
+        # One open case per run of high readings, not one per reading.
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM escalations WHERE patient_id=? AND resolved=0 AND details LIKE ?",
+            (patient_id, '%"band": "elevated"%')
+        )
+        escalate = (await cursor.fetchone())[0] == 0
+    if escalate:
+        details = json.dumps({"reading": reading, "band": band, "target": "below 140/90",
+                              "elevated_readings_last_14_days": count, "message": message})
+        await db.execute(
+            "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
+            (patient_id, BP_BAND_REASON[band].format(reading=reading, count=count), risk_level, details, now)
+        )
+    await _refresh_risk(patient_id, db)
+    return note, escalate
+
+
+async def _start_booking(patient_id: int, name: str, doctor_name: str, service_type: str,
+                         condition: str, message: str, db: Connection):
+    """The classifier heard a booking request the keywords missed. Start the
+    real flow — free-text chat can only promise an appointment, not make one."""
+    turn = await handle_appointment_turn(
+        db=db, patient_id=patient_id, patient_name=name,
+        clinician_name=doctor_name or "Dr. Mensah",
+        visit_type=service_type or f"{condition.title()} review",
+        current_flow="idle", context={}, message=message, force_intent="book",
     )
-    return note, True
+    if not turn:
+        return None
+    bot_reply, new_flow, new_context = turn
+    await db.execute(
+        """INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)
+           ON CONFLICT(patient_id) DO UPDATE SET current_flow=excluded.current_flow, context=excluded.context""",
+        (patient_id, new_flow, json.dumps(new_context)),
+    )
+    await db.commit()
+    return bot_reply, None, False
+
+
+async def _barrier_days(patient_id: int, reason: str, db: Connection) -> int:
+    """Days in the last 14 on which the patient reported this barrier. Days,
+    not messages: saying "my legs are swelling" twice in one chat is one
+    report, and must not turn a patient red on its own."""
+    since = (date.today() - timedelta(days=14)).isoformat()
+    cursor = await db.execute(
+        "SELECT DISTINCT log_date FROM adherence_logs WHERE patient_id=? AND response=? AND log_date>?",
+        (patient_id, reason, since)
+    )
+    days = {r[0] for r in await cursor.fetchall()}
+    if reason == "side_effect":
+        cursor = await db.execute(
+            "SELECT DISTINCT log_date FROM care_logs WHERE patient_id=? AND activity='side_effect' AND log_date>?",
+            (patient_id, since)
+        )
+        days |= {r[0] for r in await cursor.fetchall()}
+    return len(days)
+
+
+def _says_dose_missed(message: str) -> bool:
+    text = message.lower().replace("’", "'")
+    return text.strip(" !.") in NO_WORDS or any(k in text for k in MISS_INDICATORS)
 
 
 async def _handle_missed_dose(patient_id: int, name: str, message: str,
                               db: Connection, now: str, today: str):
     """Single source of truth for a missed/blocked dose: detect the reason, log it,
     and apply the escalation rules. Used by BOTH the reminder-reply flow and free chat,
-    so a cost barrier is flagged no matter how the patient phrases it."""
+    so a cost barrier is flagged no matter how the patient phrases it.
+
+    Returns (reply, reason, escalation_created, dose_missed). A side effect is
+    a missed dose only when the patient says so — "my legs are swelling" is a
+    symptom to review, and logging it as a miss made adherent patients look
+    non-adherent. It is kept as a care note instead.
+    """
     # Deterministic rules win for treatment barriers. Escalation is a clinical
     # decision, so the LLM may only fill in where the rules found nothing:
     # "couldn't afford it so I forgot" must count as cost, whatever the model says.
@@ -157,46 +250,64 @@ async def _handle_missed_dose(patient_id: int, name: str, message: str,
         if reason == "other":
             reason = rule_reason or "other"
 
-    await db.execute(
-        "INSERT INTO adherence_logs (patient_id, log_date, response, created_at) VALUES (?,?,?,?)",
-        (patient_id, today, reason, now)
-    )
+    dose_missed = reason != "side_effect" or _says_dose_missed(message)
+    if dose_missed:
+        # One row per reason per day, so a repeated message doesn't count as
+        # another missed dose in the adherence figure.
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM adherence_logs WHERE patient_id=? AND log_date=? AND response=?",
+            (patient_id, today, reason)
+        )
+        if (await cursor.fetchone())[0] == 0:
+            await db.execute(
+                "INSERT INTO adherence_logs (patient_id, log_date, response, created_at) VALUES (?,?,?,?)",
+                (patient_id, today, reason, now)
+            )
+    if reason == "side_effect":
+        await db.execute(
+            "INSERT INTO care_logs (patient_id, log_date, activity, response, details, created_at) VALUES (?,?,?,?,?,?)",
+            (patient_id, today, "side_effect", "concern", message, now),
+        )
     bot_reply = await generate_bot_reply(name, "awaiting_medication_ack", message, reason=reason)
 
     escalation_created = False
     if reason in ESCALATE_AT:
+        count = await _barrier_days(patient_id, reason, db)
+        # The reply tells the patient their care team has been told, so a case
+        # must exist — amber on the first day, red once it repeats on another
+        # day. One case per reason per day.
         cursor = await db.execute(
-            "SELECT COUNT(*) FROM adherence_logs WHERE patient_id=? AND response=? AND log_date>?",
-            (patient_id, reason, (date.today() - timedelta(days=14)).isoformat())
+            "SELECT id, details FROM escalations WHERE patient_id=? AND resolved=0 AND created_at>=? "
+            "AND details LIKE ? ORDER BY id DESC LIMIT 1",
+            (patient_id, today, f'%"reason": "{reason}"%')
         )
-        count = (await cursor.fetchone())[0]
-        if count >= ESCALATE_AT[reason]:
-            details = json.dumps({
-                "reason": reason, "occurrences_last_14_days": count, "last_message": message,
-            })
-            await db.execute(
-                "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
-                (patient_id, ESC_REASON_TEXT[reason].format(count=count), "red", details, now)
-            )
-            await db.execute("UPDATE patients SET risk_level='red' WHERE id=?", (patient_id,))
-            escalation_created = True
+        open_case = await cursor.fetchone()
+        if open_case:
+            # Same barrier again today: add it to that case so staff see what
+            # changed ("my legs are swelling too", "so I stopped taking them").
+            details = json.loads(open_case[1] or "{}")
+            details.setdefault("further_messages", []).append(f"{now[11:16]} {message}")
+            await db.execute("UPDATE escalations SET details=? WHERE id=?",
+                             (json.dumps(details), open_case[0]))
+            first = display_first_name(name)
+            bot_reply = f"Thank you, {first}. I've added this to today's note for your care team."
+            if reason == "side_effect":
+                bot_reply += (" Please don't stop your medication without speaking to your doctor first. "
+                              "If your face, lips or tongue swell, or you find it hard to breathe, "
+                              "go to the nearest hospital now or call 112 or 193. 🏥")
         else:
-            # The reply tells the patient their care team has been told, so a
-            # case must exist for staff to see — amber on the first report,
-            # red once it repeats.
+            level = "red" if count >= ESCALATE_AT[reason] else "amber"
             details = json.dumps({
                 "reason": reason, "occurrences_last_14_days": count, "last_message": message,
             })
             await db.execute(
                 "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
-                (patient_id, ESC_REASON_TEXT[reason].format(count=count), "amber", details, now)
+                (patient_id, ESC_REASON_TEXT[reason].format(count=count), level, details, now)
             )
-            await db.execute(
-                "UPDATE patients SET risk_level='amber' WHERE id=? AND risk_level<>'red'", (patient_id,)
-            )
+            await _refresh_risk(patient_id, db)
             escalation_created = True
 
-    return bot_reply, reason, escalation_created
+    return bot_reply, reason, escalation_created, dose_missed
 
 
 async def _process_dental_message(
@@ -268,7 +379,7 @@ async def _process_dental_message(
             "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
             (patient_id, f"Dental recovery concern reported: {message}", risk, details, now),
         )
-        await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk, patient_id))
+        await _refresh_risk(patient_id, db)
         bot_reply = concern_reply
         escalation_created = True
     elif any(word in text for word in ("eat", "eating", "food", "drink", "meal", "spicy", "hot", "hard")):
@@ -375,7 +486,7 @@ async def _process_eye_message(
             "INSERT INTO escalations (patient_id, reason, risk_level, details, created_at) VALUES (?,?,?,?,?)",
             (patient_id, f"Eye-care concern reported: {message}", risk, details, now),
         )
-        await db.execute("UPDATE patients SET risk_level=? WHERE id=?", (risk, patient_id))
+        await _refresh_risk(patient_id, db)
         bot_reply = concern_reply
         escalation_created = True
     elif any(word in text for word in ("appointment", "book", "schedule", "reschedule", "recall")):
@@ -572,6 +683,14 @@ async def process_message(patient_id: int, message: str, db: Connection):
     # ── APPOINTMENTS (real downstream action) ──
     # Emergency handling stays above this. The assistant structures the request,
     # while deterministic availability rules create the actual database record.
+    if category == "chronic" and is_side_question(message, current_flow, context):
+        # Answer the question, keep the half-finished booking open.
+        facts, history = await _build_context(patient_id, db, name, condition, drug_name,
+                                              drug_dosage, streak, reminder_time)
+        answer = await generate_assistant_reply(facts, history, message, booking_open=True)
+        await db.commit()
+        return f"{answer}\n\n{booking_reprompt(current_flow, context)}", None, False
+
     appointment_turn = await handle_appointment_turn(
         db=db,
         patient_id=patient_id,
@@ -632,8 +751,9 @@ async def process_message(patient_id: int, message: str, db: Connection):
             bot_reply = await generate_bot_reply(name, "awaiting_medication_ack", message, streak=streak)
 
             # Update risk toward green if streak building
+            # A streak never clears an open case — risk follows the cases.
             if streak >= 7:
-                await db.execute("UPDATE patients SET risk_level='green' WHERE id=?", (patient_id,))
+                await _refresh_risk(patient_id, db)
 
             # "I took it, BP was 135/85" — the reading must not be dropped.
             systolic, diastolic = parse_bp(message)
@@ -647,14 +767,32 @@ async def process_message(patient_id: int, message: str, db: Connection):
             # A reminder is pending, but the reply may be an excuse OR an unrelated
             # question/appointment request. Only log a miss if it's actually about the dose.
             # A plain "no" to a reminder is a missed dose, model or no model.
+            systolic, diastolic = parse_bp(message)
             if msg_lower.rstrip("!.") in NO_WORDS:
                 intent = "missed"
+            elif (systolic is not None and not barrier_override(message)
+                  and classify_intent_rule(message) != "missed"):
+                intent = "reading"
             else:
                 intent = await classify_intent(name, message)
             # Cost / side-effect / out-of-stock are barriers — always flag & escalate,
             # never let them slip into casual conversation.
-            if detect_reason_rule(message) in ("cost", "side_effect", "ran_out"):
+            if barrier_override(message):
                 intent = "missed"
+            if intent == "reading":
+                # A reading sent instead of YES must not be dropped; the dose
+                # question stays open.
+                bp_reply, escalation_created = await _record_bp_reading(
+                    patient_id, systolic, diastolic, message, db, now
+                )
+                await db.commit()
+                return (f"{bp_reply}\n\nHave you taken your {drug_name} today? Reply YES once you have.",
+                        None, escalation_created)
+            if intent == "appointment":
+                booking = await _start_booking(patient_id, name, doctor_name, service_type,
+                                               condition, message, db)
+                if booking:
+                    return booking
             if intent in ("appointment", "question", "other"):
                 facts, history = await _build_context(patient_id, db, name, condition, drug_name,
                                                       drug_dosage, streak, reminder_time)
@@ -669,23 +807,31 @@ async def process_message(patient_id: int, message: str, db: Connection):
                 return bot_reply, None, False
 
             # Missed/blocked dose — shared handler logs it and applies escalation rules
-            bot_reply, reason, escalation_created = await _handle_missed_dose(
+            bot_reply, reason, escalation_created, dose_missed = await _handle_missed_dose(
                 patient_id, name, message, db, now, today
             )
-
-        new_flow = "idle"
+            # "Didn't take it, BP was 150/95" — keep the reading too.
+            if systolic is not None:
+                bp_reply, bp_escalated = await _record_bp_reading(
+                    patient_id, systolic, diastolic, message, db, now
+                )
+                bot_reply = f"{bot_reply} {bp_reply}"
+                escalation_created = escalation_created or bp_escalated
+            if not dose_missed:
+                # A symptom, not an answer: today's dose is still unknown.
+                bot_reply = f"{bot_reply}\n\nHave you taken your {drug_name} today? Reply YES once you have."
+                new_flow = "awaiting_medication_ack"
 
     # ── CHECK-IN flow ──
-    elif current_flow in ("checkin_bp", "awaiting_bp"):
+    # Only a reading completes it. Anything else — a question, a side effect —
+    # is handled as free text below, never answered with "send your reading":
+    # that loop once swallowed a swelling report without escalating it.
+    elif current_flow in ("checkin_bp", "awaiting_bp") and parse_bp(message)[0] is not None:
         systolic, diastolic = parse_bp(message)
-        if systolic is not None:
-            bot_reply, escalation_created = await _record_bp_reading(
-                patient_id, systolic, diastolic, message, db, now
-            )
-            new_flow = "idle"
-        else:
-            bot_reply = "Please send your blood pressure as two numbers, like 128/82."
-            new_flow = "awaiting_bp"
+        bot_reply, escalation_created = await _record_bp_reading(
+            patient_id, systolic, diastolic, message, db, now
+        )
+        new_flow = "idle"
 
     # ── IDLE / free text ──
     else:
@@ -715,11 +861,17 @@ async def process_message(patient_id: int, message: str, db: Connection):
 
             # Cost / side-effect / out-of-stock are barriers — always flag & escalate,
             # even if the classifier thought it was casual conversation.
-            if detect_reason_rule(message) in ("cost", "side_effect", "ran_out"):
+            if barrier_override(message):
                 intent = "missed"
 
+            booking = None
+            if intent == "appointment":
+                booking = await _start_booking(patient_id, name, doctor_name, service_type,
+                                               condition, message, db)
+            if booking:
+                return booking
             if intent == "missed":
-                bot_reply, reason, escalation_created = await _handle_missed_dose(
+                bot_reply, reason, escalation_created, _ = await _handle_missed_dose(
                     patient_id, name, message, db, now, today
                 )
             else:

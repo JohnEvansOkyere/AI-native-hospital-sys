@@ -103,15 +103,37 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 
 ### Escalation rules (safety-critical — keep deterministic)
 
-- **BP bands** (`ai.py:bp_band` / `assess_bp_risk`), each opening a case except normal:
-  `≥180/120` crisis → `red`; `≥160/100` high → `red`; `≥140/90` elevated → `amber`;
-  `<90/60` low → `amber`; else `green`. Urgent replies name 112 and 193.
+- **BP bands** (`ai.py:bp_band` / `assess_bp_risk`, after the ISH 2020 office ranges;
+  a reading takes the band of whichever number is worse): `≥180/120` crisis → `red`;
+  `≥160/100` high → `red`; `≥140/90` elevated → `amber`; `<90/60` low → `amber`;
+  `130–139/85–89` high-normal → `green`; else normal → `green`. Crisis, high and low
+  open a case on the first reading. Elevated opens one `amber` case on the **2nd**
+  elevated-or-worse reading in 14 days (one reading is not a pattern); the first gets
+  "rest 5 minutes and check again". Replies name the range each number sits in, never
+  a pass/fail cutoff. Urgent replies name 112 and 193.
+- **A question is not a barrier report** (`ai.py:barrier_override`): "how much does a
+  visit cost?" or "can I buy it at any pharmacy?" only names a topic. Questions
+  escalate on words that state a problem ("can't afford", "ran out") or any symptom.
+- **Only the booking flow makes appointments** (`services/appointments.py`). When the
+  classifier hears a booking the keywords missed, it starts that flow; the reply
+  screen blocks model text that offers slots or claims a booking. A question asked
+  mid-booking is answered and the booking stays open.
+- **Stop / double-dose questions get a fixed answer** (`ai.py:medicine_change_answer`),
+  never a model reply: keep taking it unless the doctor says otherwise; never take extra.
+- **Patient risk follows open cases** (`bot.py:_refresh_risk`): a calm reading or a
+  good streak never clears a patient whose red case is still open.
 - **Emergency symptoms** (`ai.py:detect_emergency`, English, Ghanaian Pidgin and
   draft Twi): immediate `red` case, before any other flow. Face, lip, tongue or
   throat swelling counts as an emergency (possible ACE-inhibitor angioedema).
-- **Cost / side-effect / ran out:** an `amber` case on first occurrence; `red` on the
-  **2nd within 14 days**. A rule match always beats the LLM's reason. (`bot.py`)
-- **Streak ≥ 7 days** of `yes` pulls risk back toward `green`.
+- **Cost / side-effect / ran out:** an `amber` case on the first day it is reported;
+  `red` when it is reported on a **2nd separate day within 14 days**. Days, not
+  messages: repeats on the same day are added to that day's case
+  (`further_messages`), not opened as new cases. A rule match always beats the
+  LLM's reason. (`bot.py:_handle_missed_dose`)
+- **A side effect is not a missed dose** unless the patient says so ("so I stopped
+  taking them"). Otherwise it is a `care_logs` note (`activity='side_effect'`), and a
+  pending reminder still asks whether today's dose was taken.
+- **Streak ≥ 7 days** of `yes` re-derives risk from open cases; it never clears one.
 
 ---
 
@@ -127,7 +149,8 @@ fired by the Bell/Activity buttons; in production they are fired by a scheduler
 
 **How the models are used:** Claude first, at low effort with a 20-second timeout
 and one retry. If Claude has no key, errors, times out or declines, Groq answers
-(`llama-3.3-70b-versatile`, 10-second timeout, no retry — 70B rather than 8B because a small model tends to copy
+(`openai/gpt-oss-120b` — Groq retired Llama 3.x in 2026 — 10-second timeout, no retry; a large model
+rather than a small one because a small model tends to copy
 earlier bot messages instead of answering). If neither answers, the rules do. A
 reply that repeats a message the bot already sent (Claude once answered a patient's
 question with the enrolment welcome) gets one retry with a direct instruction, then

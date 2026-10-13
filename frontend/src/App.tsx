@@ -766,7 +766,11 @@ function PatientDetail({ patient, onUpdate }: { patient: Patient; onUpdate: () =
               <div key={esc.id} className={`p-3 rounded-xl text-sm border ${esc.risk_level === 'red' ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
                 <div className={`font-semibold ${esc.risk_level === 'red' ? 'text-red-700' : 'text-amber-700'}`}>{esc.reason}</div>
                 {esc.details && Object.keys(esc.details).map(k => (
-                  <div key={k} className="text-xs text-slate-500 mt-0.5">{k}: {String(esc.details[k])}</div>
+                  <div key={k} className="text-xs text-slate-500 mt-0.5">
+                    {k}: {Array.isArray(esc.details[k])
+                      ? (esc.details[k] as unknown[]).map((item, i) => <div key={i} className="pl-3">• {String(item)}</div>)
+                      : String(esc.details[k])}
+                  </div>
                 ))}
               </div>
             ))}

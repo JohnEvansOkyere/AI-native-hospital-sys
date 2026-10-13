@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evals"))
 from conversation_scenarios import PROGRAMS, SCENARIOS  # noqa: E402
 
 EXPECT_KEYS = {"dose", "reason", "care_log", "escalation", "bp", "flow",
-               "appointment", "emergency", "forbid", "rubric"}
+               "appointment", "emergency", "forbid", "require", "rubric"}
 ALLOWED = {
     "dose": {"none", "taken", "missed"},
     "reason": {"cost", "forgot", "side_effect", "ran_out", "other"},

@@ -42,13 +42,17 @@ def appointment_intent(text: str) -> str | None:
     has_appointment = any(word in value for word in appointment_words)
     if has_appointment and any(word in value for word in ("cancel", "remove", "call off")):
         return "cancel"
-    if any(word in value for word in ("reschedule", "move my appointment", "change my appointment")):
+    if any(word in value for word in (
+        "reschedule", "move my appointment", "change my appointment", "postpone",
+        "can't make it", "cannot make it", "can not make it", "won't make it",
+        "change the date", "change the day", "another day", "different day",
+    )) or re.search(r"\b(change|move) it to\b", value):
         return "reschedule"
     if has_appointment and any(word in value for word in ("when is", "what time", "details", "check my")):
         return "status"
     if has_appointment or any(word in value for word in (
         "book me", "book my", "book a visit", "book a review", "schedule a visit",
-    )):
+    )) or value.strip(" .!") == "book":
         return "book"
     return None
 
@@ -143,8 +147,17 @@ def format_time(value: str) -> str:
     return datetime.strptime(value, "%H:%M").strftime("%-I:%M %p")
 
 
+ORDINALS = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
+            "fourth": 4, "4th": 4, "fifth": 5, "5th": 5, "sixth": 6, "6th": 6}
+
+
 def parse_slot_choice(text: str, offered: list[str]) -> str | None:
     value = _normalise(text)
+    ordinal = re.search(rf"\b({'|'.join(ORDINALS)})\b", value)
+    if ordinal and 0 < ORDINALS[ordinal.group(1)] <= len(offered):
+        return offered[ORDINALS[ordinal.group(1)] - 1]
+    if re.search(r"\b(last one|the last)\b", value) and offered:
+        return offered[-1]
     number = re.search(r"\b([1-6])\b", value)
     if number:
         index = int(number.group(1)) - 1
@@ -164,6 +177,33 @@ def parse_slot_choice(text: str, offered: list[str]) -> str | None:
         if candidate in offered:
             return candidate
     return None
+
+
+def is_side_question(message: str, current_flow: str, context: dict) -> bool:
+    """A question asked mid-booking ("how much will the visit cost?") that is
+    not itself an answer to the booking step. It gets answered, and the
+    booking stays where it was, instead of the slot list being repeated."""
+    value = _normalise(message)
+    if appointment_intent(message):
+        return False
+    asked = "?" in message or bool(re.match(
+        r"(how|what|when|where|which|who|why|can|could|may|is|are|do|does|should|will|would|wait)\b", value))
+    if not asked:
+        return False
+    if current_flow == "appointment_awaiting_slot":
+        return parse_slot_choice(message, list(context.get("slots", []))) is None
+    if current_flow == "appointment_awaiting_date":
+        return parse_requested_date(message) is None
+    return False
+
+
+def booking_reprompt(current_flow: str, context: dict) -> str:
+    if current_flow == "appointment_awaiting_slot" and context.get("slots"):
+        choices = ", ".join(f"{i + 1} for {format_time(slot)}" for i, slot in enumerate(context["slots"]))
+        return (f"To finish booking for {format_date(context['appointment_date'])}, reply {choices}.")
+    if current_flow == "appointment_awaiting_date":
+        return "To finish booking, tell me which weekday you'd like to come in."
+    return ""
 
 
 def _appointment_from_row(row) -> dict:
@@ -300,14 +340,28 @@ async def offer_slots(
 async def handle_appointment_turn(
     db: Connection, patient_id: int, patient_name: str, clinician_name: str,
     visit_type: str, current_flow: str, context: dict, message: str,
+    force_intent: str | None = None,
 ) -> tuple[str, str, dict] | None:
-    """Handle one appointment turn, returning reply/new flow/new context."""
-    intent = appointment_intent(message)
+    """Handle one appointment turn, returning reply/new flow/new context.
+
+    `force_intent` starts the flow for a request the keywords missed but the
+    intent classifier caught — a booking must never be left to free-text chat,
+    which can only promise one, not make it."""
+    intent = appointment_intent(message) or force_intent
     in_flow = current_flow.startswith("appointment_")
     if not intent and not in_flow:
         return None
 
     first = patient_name.split()[0] if patient_name else "there"
+    if force_intent and not in_flow and not appointment_intent(message):
+        existing = await next_appointment(db, patient_id)
+        if existing:
+            return (
+                f"You already have an appointment on {format_date(existing['appointment_date'])} at "
+                f"{format_time(existing['appointment_time'])} with {existing['clinician_name']}. "
+                "Reply RESCHEDULE if you'd like to move it.",
+                "idle", {},
+            )
     selected_clinician = context.get("clinician_name") or requested_clinician(message, clinician_name)
 
     if current_flow == "appointment_awaiting_cancel":

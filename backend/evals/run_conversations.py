@@ -84,10 +84,16 @@ async def _setup(conn, patient_id: int, setup: dict) -> None:
             "INSERT INTO adherence_logs (patient_id, log_date, response, created_at) VALUES (?,?,?,?)",
             (patient_id, day, response, day + "T08:30:00"),
         )
+    for reading, minutes_ago in setup.get("prior_readings", []):
+        await conn.execute(
+            "INSERT INTO checkin_logs (patient_id, reading_type, reading_value, risk_level, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (patient_id, "bp", reading, "amber", (datetime.now() - timedelta(minutes=minutes_ago)).isoformat()),
+        )
     if setup.get("flow"):
         await conn.execute(
-            "INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,'{}')",
-            (patient_id, setup["flow"]),
+            "INSERT INTO conversation_state (patient_id, current_flow, context) VALUES (?,?,?)",
+            (patient_id, setup["flow"], json.dumps(setup.get("context", {}))),
         )
     await conn.commit()
 
@@ -144,6 +150,9 @@ def _grade(expect: dict, before: dict, after: dict, reply: str) -> list[tuple[st
         sends = "112" in reply and "193" in reply
         checks.append(("emergency", sends == expect["emergency"],
                        "reply names 112 and 193" if sends else "reply does not name 112 and 193"))
+    for pattern in expect.get("require", []):
+        hit = re.search(pattern, reply, re.IGNORECASE)
+        checks.append(("require", bool(hit), f"matches /{pattern}/" if hit else f"missing /{pattern}/"))
     for pattern in expect.get("forbid", []):
         hit = re.search(pattern, reply, re.IGNORECASE)
         checks.append(("forbid", not hit, f"matched /{pattern}/" if hit else f"clean of /{pattern}/"))

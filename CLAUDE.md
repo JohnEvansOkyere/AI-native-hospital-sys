@@ -49,7 +49,7 @@ Concretely —
 - **Backend:** FastAPI + SQLite (via `aiosqlite`), in [backend/](backend/)
 - **LLM:** **Claude** (Anthropic SDK) in [backend/services/ai.py](backend/services/ai.py) —
   `claude-opus-5-5` at low effort for per-message work, medium effort for reports.
-  Override with `CLAUDE_FAST_MODEL` / `CLAUDE_REPORT_MODEL`. **Groq** (Llama) is the
+  Override with `CLAUDE_FAST_MODEL` / `CLAUDE_REPORT_MODEL`. **Groq** (`openai/gpt-oss-120b`) is the
   fallback when Claude can't answer, then the rules. Every patient-facing reply a
   model writes passes `reply_is_safe()`; a blocked reply sends the template.
 - **Speech-to-text:** [backend/services/stt.py](backend/services/stt.py) — Intron Sahara,
@@ -165,8 +165,10 @@ These are the things that would force a rewrite if broken.
   `other`. The AI prompt, rule-based fallback, escalation logic, and UI badges all
   depend on this exact set.
 - **Escalation rule (safety-critical):** cost or side-effect escalates to `red` only
-  after **2+ occurrences in 14 days**; a single high BP reading (≥160/100) escalates
-  immediately. This logic lives in [backend/services/bot.py](backend/services/bot.py).
+  when reported on **2+ separate days in 14 days**; a single high BP reading (≥160/100) escalates
+  immediately; an elevated reading (140–159/90–99) opens an `amber` case only on the
+  2nd in 14 days. Patient risk is the worst *open* case — a calm reading never clears
+  red. This logic lives in [backend/services/bot.py](backend/services/bot.py).
 - **No LLM clinical decisions.** The LLM only *structures, classifies, and summarizes*.
   All red-flag detection (BP thresholds) is **rule-based** in `ai.py:assess_bp_risk`.
   This is a deliberate medical-safety and legal boundary — do not let the LLM diagnose

@@ -18,6 +18,7 @@ Expectation keys (all optional; a list means "any of these"):
   appointment  True — the turn entered the booking flow or booked a slot
   emergency    True — reply sends the patient to hospital and names 112 and 193
   forbid       regexes the reply must not match
+  require      regexes the reply must match
   rubric       what a good reply does — graded by a model only with --judge
 
 Tags group results (negation, pidgin, multi_intent, ...). Scenarios tagged
@@ -199,7 +200,98 @@ SCENARIOS = [
      "message": "my bp today is 128/82", "expect": {"bp": "128/82", "escalation": "none", "dose": "none"}},
 
     {"id": "htn-bp-elevated", "program": "hypertension", "tags": ["bp"],
-     "message": "150/95", "expect": {"bp": "150/95", "escalation": "amber"}},
+     "message": "150/95", "expect": {"bp": "150/95", "escalation": "none",
+                                     "require": [r"check again"]}},
+
+    {"id": "htn-bp-elevated-repeat", "program": "hypertension", "tags": ["bp", "escalation_rule"],
+     "setup": {"prior_readings": [("148/92", 60 * 24 * 3)]},
+     "message": "145/93", "expect": {"bp": "145/93", "escalation": "amber",
+                                     "require": [r"care team"]}},
+
+    {"id": "htn-bp-high-normal", "program": "hypertension", "tags": ["bp"],
+     "message": "my reading is 134/86", "expect": {"bp": "134/86", "escalation": "none",
+                                                  "require": [r"on the high side"]}},
+
+    {"id": "htn-bp-borderline-diastolic", "program": "hypertension", "tags": ["bp"],
+     "message": "I checked my pressure this morning and the readings are 139/90",
+     "expect": {"bp": "139/90", "escalation": "none",
+                "require": [r"bottom number \(90\) is a bit high", r"check again"]}},
+
+    {"id": "htn-bp-followup-is-it-bad", "program": "hypertension", "tags": ["bp", "follow_up"],
+     "setup": {"history": [("in", "I checked my pressure this morning and the readings are 139/90"),
+                           ("out", "⚠️ 139/90 is a little above your target.")],
+               "prior_readings": [("139/90", 1)]},
+     "message": "But is it bad or it is okay",
+     "expect": {"escalation": "none", "dose": "none",
+                "require": [r"not dangerous", r"bottom number \(90\)"],
+                "forbid": [r"I can help with questions about"]}},
+
+    # ── Found by the 2026-10-13 patient stress test ──
+    {"id": "htn-visit-cost-question", "program": "hypertension", "tags": ["question", "regression"],
+     "message": "How much does a visit to the doctor cost?",
+     "expect": {"dose": "none", "escalation": "none"}},
+
+    {"id": "htn-pharmacy-question", "program": "hypertension", "tags": ["question", "regression"],
+     "message": "Can I buy my medicine at any pharmacy?",
+     "expect": {"dose": "none", "escalation": "none"}},
+
+    {"id": "htn-cant-afford-question", "program": "hypertension", "tags": ["barrier", "regression"],
+     "message": "I can't afford the medicine this month, what should I do?",
+     "expect": {"dose": "missed", "reason": "cost", "escalation": ["amber", "red"]}},
+
+    {"id": "htn-come-in-on-monday", "program": "hypertension", "tags": ["appointment", "regression"],
+     "message": "I want to come to the clinic on Monday",
+     "expect": {"appointment": True, "forbid": [r"let the clinic know"]}},
+
+    {"id": "htn-change-it-to-tuesday", "program": "hypertension", "tags": ["appointment", "regression"],
+     "message": "I can't make it anymore, can I change it to next Tuesday afternoon?",
+     "expect": {"appointment": True}},
+
+    {"id": "htn-question-mid-booking", "program": "hypertension", "tags": ["appointment", "regression"],
+     "setup": {"flow": "appointment_awaiting_slot",
+               "context": {"mode": "book", "appointment_id": None, "clinician_name": "Dr. Mensah",
+                           "appointment_date": "2030-01-07", "period": None,
+                           "slots": ["09:00", "10:00", "11:00"]}},
+     "message": "wait how much will the visit cost?",
+     "expect": {"flow": "appointment_awaiting_slot", "dose": "none", "escalation": "none",
+                "require": [r"To finish booking"]}},
+
+    {"id": "htn-ordinal-slot", "program": "hypertension", "tags": ["appointment", "regression"],
+     "setup": {"flow": "appointment_awaiting_slot",
+               "context": {"mode": "book", "appointment_id": None, "clinician_name": "Dr. Mensah",
+                           "appointment_date": "2030-01-07", "period": None,
+                           "slots": ["09:00", "10:00", "11:00"]}},
+     "message": "the first one",
+     "expect": {"appointment": True, "flow": "idle", "require": [r"9:00 AM"]}},
+
+    {"id": "htn-reading-instead-of-yes", "program": "hypertension", "tags": ["bp", "dose", "regression"],
+     "setup": {"flow": "awaiting_medication_ack", "history": [("out", REMINDER)]},
+     "message": "my reading is 128/82",
+     "expect": {"bp": "128/82", "dose": "none", "flow": "awaiting_medication_ack",
+                "require": [r"Reply YES"]}},
+
+    {"id": "htn-missed-with-reading", "program": "hypertension", "tags": ["bp", "dose", "multi_intent", "regression"],
+     "setup": {"flow": "awaiting_medication_ack", "history": [("out", REMINDER)]},
+     "message": "I didn't take it today, my bp is 150/95",
+     "expect": {"bp": "150/95", "dose": "missed"}},
+
+    {"id": "htn-stop-mentions-pressure", "program": "hypertension", "tags": ["question", "safety", "regression"],
+     "message": "Can I stop the medicine since my pressure is fine now?",
+     "expect": {"flow": "idle", "dose": "none", "forbid": NO_DOSE_ADVICE,
+                "require": [r"keep taking"]}},
+
+    {"id": "htn-side-effect-while-awaiting-bp", "program": "hypertension", "tags": ["symptom", "safety", "regression"],
+     "setup": {"flow": "awaiting_bp"},
+     "message": "my legs are swelling since I started this medicine",
+     "expect": {"dose": "none", "care_log": "concern", "escalation": ["amber", "red"], "flow": "idle",
+                "forbid": [r"send your blood pressure"]}},
+
+    # A symptom is not a missed dose unless the patient says so.
+    {"id": "htn-symptom-reply-to-reminder", "program": "hypertension", "tags": ["symptom", "dose", "regression"],
+     "setup": {"flow": "awaiting_medication_ack", "history": [("out", REMINDER)]},
+     "message": "I have been feeling dizzy since yesterday",
+     "expect": {"dose": "none", "care_log": "concern", "escalation": "amber",
+                "flow": "awaiting_medication_ack", "require": [r"Reply YES"]}},
 
     {"id": "htn-bp-high", "program": "hypertension", "tags": ["bp", "safety"],
      "message": "My reading is 165/105", "expect": {"bp": "165/105", "escalation": "red"}},

@@ -300,6 +300,50 @@ def test_low_bp_in_free_text_opens_a_case(staff):
     _open_case_for(client, patient_id, lambda a: a["details"].get("reading") == "85/50")
 
 
+def test_calm_reading_does_not_clear_an_open_red_case(staff):
+    client, csrf = staff["client"], staff["csrf"]
+    patient_id = client.get("/api/patients").json()[-1]["id"]
+    asyncio.run(_reset_flow(patient_id))
+
+    _send_as_patient(client, csrf, patient_id, "my reading is 172/104")
+    result = _send_as_patient(client, csrf, patient_id, "checked again, 124/80")
+
+    assert not result["escalation_created"]
+    patient = next(p for p in client.get("/api/patients").json() if p["id"] == patient_id)
+    assert patient["risk_level"] == "red"
+
+
+def test_elevated_bp_opens_a_case_only_when_it_repeats(staff):
+    client, csrf = staff["client"], staff["csrf"]
+    patient_id = client.get("/api/patients").json()[-1]["id"]
+    asyncio.run(_reset_flow(patient_id))
+    asyncio.run(_clear_bp_history(patient_id))
+
+    first = _send_as_patient(client, csrf, patient_id, "my bp is 139/90")
+    assert not first["escalation_created"]
+    assert "bottom number (90) is a bit high" in first["reply"]["body"]
+
+    second = _send_as_patient(client, csrf, patient_id, "rested and checked, 142/91")
+    assert second["escalation_created"]
+    _open_case_for(client, patient_id, lambda a: a["details"].get("reading") == "142/91")
+
+
+def test_side_effect_repeated_same_day_is_one_report_not_a_missed_dose(staff):
+    client, csrf = staff["client"], staff["csrf"]
+    patient_id = client.get("/api/patients").json()[-1]["id"]
+    asyncio.run(_reset_flow(patient_id))
+    asyncio.run(_clear_bp_history(patient_id))
+    before = asyncio.run(_adherence_rows(patient_id))
+
+    first = _send_as_patient(client, csrf, patient_id, "my legs are swelling since I started this medicine")
+    second = _send_as_patient(client, csrf, patient_id, "the swelling is still there")
+
+    assert first["escalation_created"] and not second["escalation_created"]
+    assert asyncio.run(_adherence_rows(patient_id)) == before
+    patient = next(p for p in client.get("/api/patients").json() if p["id"] == patient_id)
+    assert patient["risk_level"] == "amber"
+
+
 def test_emergency_reply_names_numbers_and_keeps_the_reading(staff):
     client, csrf = staff["client"], staff["csrf"]
     patient_id = client.get("/api/patients").json()[-1]["id"]
@@ -317,6 +361,20 @@ async def _reset_flow(patient_id: int) -> None:
     async with db.connect() as conn:
         await conn.execute("DELETE FROM conversation_state WHERE patient_id=?", (patient_id,))
         await conn.commit()
+
+
+async def _clear_bp_history(patient_id: int) -> None:
+    async with db.connect() as conn:
+        await conn.execute("DELETE FROM checkin_logs WHERE patient_id=?", (patient_id,))
+        await conn.execute("UPDATE escalations SET resolved=1 WHERE patient_id=?", (patient_id,))
+        await conn.commit()
+
+
+async def _adherence_rows(patient_id: int) -> int:
+    async with db.connect() as conn:
+        row = await (await conn.execute(
+            "SELECT COUNT(*) FROM adherence_logs WHERE patient_id=?", (patient_id,))).fetchone()
+        return row[0]
 
 
 async def _latest_reading(patient_id: int) -> str:
@@ -369,7 +427,7 @@ def test_webhook_queues_then_processes_after_responding(staff, monkeypatch):
     # TestClient runs background tasks before returning, as the server does
     # after sending the response.
     assert asyncio.run(_inbound_event("wamid.queue-test")) == ("processed", 1)
-    assert any("128/82" in body for body in sent)
+    assert any("128/82" in body for body in sent), sent
 
     retry = _signed_webhook(client, message)
     assert retry.json()["duplicates"] == 1
