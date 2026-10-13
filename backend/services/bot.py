@@ -21,6 +21,21 @@ def is_yes(text: str) -> bool:
     return is_affirmative(text)
 
 
+GREETINGS = ("start", "begin", "hi", "hello")
+
+
+async def _is_first_contact(patient_id: int, db: Connection) -> bool:
+    """True when the message being handled is the patient's first. The inbound
+    row is logged before process_message runs, so first contact means one row.
+    Only then does a greeting get the enrolment welcome; afterwards "hi" is
+    just hello, not a re-enrolment."""
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM messages WHERE patient_id=? AND direction='inbound'", (patient_id,)
+    )
+    row = await cursor.fetchone()
+    return (row[0] if row else 0) <= 1
+
+
 def _is_reminder_question(text: str) -> bool:
     return "reminder" in text and any(word in text for word in ("when", "next", "coming", "time", "due"))
 
@@ -41,7 +56,8 @@ def _format_time(value: str) -> str:
 
 async def _build_context(patient_id: int, db: Connection,
                          name: str, condition: str, drug_name: str,
-                         drug_dosage: str, streak: int) -> tuple[dict, list[dict]]:
+                         drug_dosage: str, streak: int,
+                         reminder_time: str = "08:00") -> tuple[dict, list[dict]]:
     """Gather the patient's real data + recent chat so the assistant can answer
     in context (their meds, adherence, last reading, conversation so far)."""
     # Adherence over last 14 days
@@ -72,6 +88,7 @@ async def _build_context(patient_id: int, db: Connection,
         "name": name, "condition": condition, "drug_name": drug_name,
         "drug_dosage": drug_dosage, "adherence_pct": adherence_pct,
         "streak": streak, "last_bp": last_bp,
+        "reminder_time": _format_time(reminder_time or "08:00"),
         "care_plan": profile[0] or "" if profile else "",
         "patient_context": profile[1] or "" if profile else "",
     }
@@ -211,7 +228,9 @@ async def _process_dental_message(
     risk, concern_reply = assess_dental_concern(message)
     affirmative = is_affirmative(message)
 
-    if text in ("start", "begin", "hi", "hello"):
+    if text in GREETINGS and not await _is_first_contact(patient_id, db):
+        bot_reply = f"Hello again, {first}! 👋 How is your recovery going? Ask me anything about your aftercare."
+    elif text in GREETINGS:
         bot_reply = (
             f"Welcome, {first}! 👋 I’m your dental care assistant. "
             f"I’ll check on your {service_type or 'dental treatment'} recovery, help with aftercare, "
@@ -328,7 +347,9 @@ async def _process_eye_message(
     reason = None
     new_flow = "idle"
 
-    if text in ("start", "begin", "hi", "hello"):
+    if text in GREETINGS and not await _is_first_contact(patient_id, db):
+        bot_reply = f"Hello again, {first}! 👋 How is your eye doing? Ask me anything about your aftercare."
+    elif text in GREETINGS:
         bot_reply = (
             f"Welcome, {first}! 👋 I’ll check on your {service_type or 'eye-care follow-up'} "
             "and remind you when it is time to return."
@@ -393,7 +414,9 @@ async def _process_general_message(
     reason = None
     escalation_created = False
 
-    if text in ("start", "begin", "hi", "hello"):
+    if text in GREETINGS and not await _is_first_contact(patient_id, db):
+        bot_reply = f"Hello again, {first}! 👋 How are you feeling? Ask me anything about your follow-up."
+    elif text in GREETINGS:
         bot_reply = f"Welcome, {first}! 👋 I’ll help with your {service_type or 'clinic follow-up'} and remind you about your next step."
     elif text in ("thanks", "thank you", "thanks a lot", "thank you so much", "got it, thanks") or text.startswith("thank you"):
         bot_reply = f"You’re welcome, {first}! 😊 Send us a message any time you need help with your follow-up."
@@ -587,10 +610,11 @@ async def process_message(patient_id: int, message: str, db: Connection):
         )
 
     # ── ENROLLMENT flow ──
-    if msg_lower in ("start", "begin", "hi", "hello") and current_flow == "idle":
+    if (msg_lower in GREETINGS and current_flow == "idle"
+            and await _is_first_contact(patient_id, db)):
         bot_reply = (
             f"Welcome! ✅ You're now enrolled in VeloxaCare. "
-            f"I'll remind you to take your {drug_name} every morning at 8am "
+            f"I'll remind you to take your {drug_name} every day at {_format_time(reminder_time or '08:00')} "
             f"and check in on how you're feeling weekly. Reply YES each morning when you've taken it. "
             f"Your health is our priority 💙"
         )
@@ -632,7 +656,8 @@ async def process_message(patient_id: int, message: str, db: Connection):
             if detect_reason_rule(message) in ("cost", "side_effect", "ran_out"):
                 intent = "missed"
             if intent in ("appointment", "question", "other"):
-                facts, history = await _build_context(patient_id, db, name, condition, drug_name, drug_dosage, streak)
+                facts, history = await _build_context(patient_id, db, name, condition, drug_name,
+                                                      drug_dosage, streak, reminder_time)
                 bot_reply = await generate_assistant_reply(facts, history, message)
                 # keep the reminder pending — they still haven't answered
                 await db.execute(
@@ -699,7 +724,8 @@ async def process_message(patient_id: int, message: str, db: Connection):
                 )
             else:
                 # appointment / question / general chat — no adherence logging
-                facts, history = await _build_context(patient_id, db, name, condition, drug_name, drug_dosage, streak)
+                facts, history = await _build_context(patient_id, db, name, condition, drug_name,
+                                                      drug_dosage, streak, reminder_time)
                 bot_reply = await generate_assistant_reply(facts, history, message)
 
     # Update conversation state

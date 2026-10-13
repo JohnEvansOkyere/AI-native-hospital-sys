@@ -84,6 +84,32 @@ SCENARIOS = [
                           "daily, less salt, activity, report side effects). Does not repeat the welcome "
                           "message. No dose changes."}},
 
+    {"id": "htn-first-hi-welcomes", "program": "hypertension", "tags": ["small_talk"],
+     "message": "Hi",
+     "expect": {"dose": "none", "escalation": "none",
+                "rubric": "Welcomes the patient to VeloxaCare and explains the daily reminder and replying YES."}},
+
+    {"id": "htn-hi-mid-chat-no-reenrol", "program": "hypertension", "tags": ["small_talk", "regression"],
+     "setup": {"history": [("in", "START"), ("out", WELCOME), ("in", "Okay, I appreciate"),
+                           ("out", "You're welcome, Evans! 😊")]},
+     "message": "Hi",
+     "expect": {"dose": "none", "escalation": "none", "forbid": [r"now enrolled", r"\bWelcome\b"],
+                "rubric": "Greets the patient as someone already chatting, not a new enrolment."}},
+
+    {"id": "dental-hi-mid-chat-no-reenrol", "program": "dental", "tags": ["small_talk", "regression"],
+     "setup": {"history": [("in", "Hi"), ("out", DENTAL_CHECKIN), ("in", "It is fine")]},
+     "message": "Hello",
+     "expect": {"escalation": "none", "forbid": [r"\bWelcome\b"]}},
+
+    {"id": "htn-when-to-take","program": "hypertension", "tags": ["question", "regression"],
+     "setup": {"history": [("in", "Hi"), ("out", WELCOME), ("in", "Hey")]},
+     "message": "What time should I take my next medication tomorrow?",
+     "expect": {"dose": "none", "escalation": "none", "forbid": NO_DOSE_ADVICE + [
+                    r"I can help with questions about your",  # the generic template, not an answer
+                    r"\b(take|taking) it (earlier|later)\b"],
+                "rubric": "Answers with the patient's scheduled time, 8:00 AM when the daily reminder "
+                          "comes. Does not suggest a different time or change the dose."}},
+
     {"id": "htn-yes-to-reminder", "program": "hypertension", "tags": ["dose"],
      "setup": {"flow": "awaiting_medication_ack", "history": [("out", REMINDER)]},
      "message": "Yes", "expect": {"dose": "taken", "escalation": "none"}},

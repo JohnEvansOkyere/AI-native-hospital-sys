@@ -141,8 +141,10 @@ def _conversation(turns: list[tuple[str, str]]) -> list[dict]:
 # BP reading or offers a diagnosis is a clinical decision, so it is never sent:
 # the caller's safe template goes instead. Deliberately broad — a blocked
 # harmless reply costs a little warmth, a sent harmful one costs far more.
+DOSE_AMOUNT = re.compile(r"\b\d+(\.\d+)?\s*(mg|milligrams?|mcg|ml|tablets?|pills?|capsules?)\b",
+                         re.IGNORECASE)
+
 UNSAFE_REPLY_PATTERNS = [re.compile(p, re.IGNORECASE) for p in (
-    r"\b\d+(\.\d+)?\s*(mg|milligrams?|mcg|ml|tablets?|pills?|capsules?)\b",
     r"\b(double|increase|decrease|reduce|lower|raise|halve|change|adjust)\b[^.?!]{0,30}\b(dose|dosage|medication|medicine|tablets?|pills?)",
     r"\b(stop|quit|skip|pause|discontinue)\b[^.?!]{0,25}\b(taking|medication|medicine|tablets?|pills?|drug)",
     r"\b(blood pressure|bp|reading)\b[^.?!]{0,30}\b(is|looks|seems|sounds)\b[^.?!]{0,15}\b(normal|fine|good|ok|okay|high|low|dangerous|healthy|great)\b",
@@ -151,7 +153,18 @@ UNSAFE_REPLY_PATTERNS = [re.compile(p, re.IGNORECASE) for p in (
 )]
 
 
-def reply_is_safe(text: str) -> bool:
+def _dose_key(match: re.Match) -> str:
+    return re.sub(r"\s+", "", match.group(0).lower())
+
+
+def reply_is_safe(text: str, prescribed: str = "") -> bool:
+    """`prescribed` is the patient's recorded dosage ("5mg once daily"). A reply
+    may restate that amount — "take your Amlodipine 5mg" is the prescription,
+    not a decision — but any other amount is still blocked, and so is any
+    wording that changes, stops or skips a dose, whatever amount it names."""
+    allowed = {_dose_key(m) for m in DOSE_AMOUNT.finditer(prescribed or "")}
+    if any(_dose_key(m) not in allowed for m in DOSE_AMOUNT.finditer(text)):
+        return False
     return not any(p.search(text) for p in UNSAFE_REPLY_PATTERNS)
 
 
@@ -169,7 +182,7 @@ def _echoes(text: str, earlier: list[str]) -> bool:
 
 
 async def _safe_reply(system: str, messages: list[dict], fallback: str, *, max_tokens: int,
-                      already_sent: list[str] | None = None) -> str:
+                      already_sent: list[str] | None = None, prescribed: str = "") -> str:
     text = await _llm(system, messages, max_tokens=max_tokens)
     if text and already_sent and _echoes(text, already_sent):
         log.warning("AI reply repeated an earlier bot message; asking once more")
@@ -181,7 +194,7 @@ async def _safe_reply(system: str, messages: list[dict], fallback: str, *, max_t
         if text and _echoes(text, already_sent):
             log.warning("AI reply repeated an earlier bot message again; sent the template instead")
             return fallback
-    if text and reply_is_safe(text):
+    if text and reply_is_safe(text, prescribed):
         return text
     if text:
         log.warning("Blocked an unsafe AI reply; sent the safe template instead")
@@ -664,6 +677,7 @@ ASSISTANT_SYSTEM = (
     "- First name: {first_name}\n"
     "- Condition: {condition}\n"
     "- Medication: {drug_name} ({drug_dosage})\n"
+    "- Daily medication reminder time: {reminder_time}\n"
     "- Medication adherence (last 14 days): {adherence_pct}%\n"
     "- Current daily streak: {streak} days\n"
     "- Clinic care instructions: {care_plan}\n"
@@ -673,7 +687,9 @@ ASSISTANT_SYSTEM = (
     "- Encourage them warmly, using their adherence and streak.\n"
     "- Give general, widely accepted lifestyle advice for high blood pressure in Ghana: less salt, "
     "fewer stock cubes and salted fish, more vegetables and fruit, regular walking.\n"
-    "- Explain how this WhatsApp service works.\n\n"
+    "- Explain how this WhatsApp service works.\n"
+    "- If they ask when to take their medication, tell them their scheduled time: {reminder_time}, "
+    "when the daily reminder comes. That time is already set by the clinic; never suggest another.\n\n"
     "YOU MUST NOT:\n"
     "- Diagnose, or suggest changing, stopping, skipping or re-timing any medication or dose.\n"
     "- Explain or judge side effects — say the care team will review them.\n"
@@ -701,6 +717,15 @@ def asks_for_advice(message: str) -> bool:
     return bool(ADVICE_PATTERN.search(message.lower()))
 
 
+DOSE_TIME_PATTERN = re.compile(
+    r"\b(what time|when)\b[^.?!]{0,40}\b(take|taking|medicine|medication|meds|tablets?|pills?|drugs?|dose)\b"
+)
+
+
+def asks_when_to_take(message: str) -> bool:
+    return bool(DOSE_TIME_PATTERN.search(message.lower()))
+
+
 async def generate_assistant_reply(facts: dict, history: list[dict], message: str) -> str:
     """Full context-aware conversational reply. `facts` = patient data,
     `history` = recent turns (oldest→newest, last turn is the current message).
@@ -709,6 +734,7 @@ async def generate_assistant_reply(facts: dict, history: list[dict], message: st
     every identifier left out is one less piece of patient data shared.
     """
     first = display_first_name(facts["name"])
+    reminder = facts.get("reminder_time") or "8:00 AM"
     system = ASSISTANT_SYSTEM.format(
         first_name=first,
         condition=facts["condition"],
@@ -716,6 +742,7 @@ async def generate_assistant_reply(facts: dict, history: list[dict], message: st
         drug_dosage=facts["drug_dosage"],
         adherence_pct=facts["adherence_pct"],
         streak=facts["streak"],
+        reminder_time=reminder,
         care_plan=facts.get("care_plan") or "none recorded",
         patient_context=facts.get("patient_context") or "none recorded",
     )
@@ -724,7 +751,13 @@ async def generate_assistant_reply(facts: dict, history: list[dict], message: st
     turns = [("assistant" if h["direction"] == "outbound" else "user", h["body"]) for h in prior[-8:]]
     messages = _conversation(turns + [("user", message)])
 
-    if asks_for_advice(message) and "hypertension" in (facts["condition"] or "").lower():
+    if asks_when_to_take(message) and facts["drug_name"]:
+        fallback = (f"Your {facts['drug_name']} is due at {reminder} each day, {first} — that's when "
+                    "your reminder comes. Reply YES once you've taken it 💙")
+    elif message.lower().strip(" !.") in ("hi", "hello", "hey", "start", "begin"):
+        fallback = (f"Hello again, {first}! 👋 How are you feeling today? Ask me anything about your "
+                    f"{facts['drug_name']} or your care, or share a blood pressure reading anytime.")
+    elif asks_for_advice(message) and "hypertension" in (facts["condition"] or "").lower():
         fallback = (f"Good question, {first}! 💙 Take your {facts['drug_name']} at the same time every "
                     "day, even when you feel well. Use less salt, fewer stock cubes and less salted fish, "
                     "eat more vegetables and fruit, and try a 30-minute walk most days. If anything "
@@ -734,7 +767,8 @@ async def generate_assistant_reply(facts: dict, history: list[dict], message: st
                     f"{facts['condition']}, your {facts['drug_name']}, or booking an appointment. "
                     f"Reply YES when you've taken your medication, or share a blood pressure reading anytime.")
     already_sent = [h["body"] for h in prior if h["direction"] == "outbound"]
-    return await _safe_reply(system, messages, fallback, max_tokens=2048, already_sent=already_sent)
+    return await _safe_reply(system, messages, fallback, max_tokens=2048, already_sent=already_sent,
+                             prescribed=facts.get("drug_dosage") or "")
 
 
 async def generate_weekly_report(patients_data: list[dict]) -> str:
