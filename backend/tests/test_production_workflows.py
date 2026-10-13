@@ -86,8 +86,7 @@ def test_session_allows_reads_and_csrf_protects_writes(staff):
 def test_incomplete_integrations_allow_pending_enrollment_but_block_messaging(staff, monkeypatch):
     client, csrf = staff["client"], staff["csrf"]
     monkeypatch.setattr(
-        main_module, "missing_production_config",
-        lambda: ["META_APP_SECRET", "CRON_SECRET", "META_MEDICATION_REMINDER_TEMPLATE"],
+        main_module, "missing_messaging_config", lambda: ["META_APP_SECRET", "CRON_SECRET"],
     )
     assert client.get("/api/auth/me").status_code == 200
     assert client.get("/api/patients").status_code == 200
@@ -124,6 +123,18 @@ def test_incomplete_integrations_allow_pending_enrollment_but_block_messaging(st
     )
     assert communication_blocked.status_code == 503
     assert "clinical writes are disabled" in communication_blocked.json()["detail"]
+
+
+def test_missing_reminder_template_does_not_block_care_team_writes(monkeypatch):
+    """A missing reminder template degrades scheduled reminders only. It must
+    never stop the care team from contacting a patient."""
+    import config
+    monkeypatch.setenv("APP_ENV", "production")
+    for name in config.MESSAGING_REQUIRED:
+        monkeypatch.setenv(name, "set")
+    monkeypatch.delenv("META_MEDICATION_REMINDER_TEMPLATE", raising=False)
+    assert config.missing_messaging_config() == []
+    assert config.missing_production_config() == ["META_MEDICATION_REMINDER_TEMPLATE"]
 
 
 def test_enrollment_does_not_message_without_consent(staff):

@@ -25,7 +25,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 import db as db_store  # noqa: E402
 from db import init_db, get_db, DB_PATH, Connection, insert_returning_id  # noqa: E402
 from config import (cors_origins, demo_tools_enabled, environment,  # noqa: E402
-                    missing_production_config, production_like)
+                    missing_messaging_config, missing_production_config,
+                    production_like)
 from services.bot import process_message, trigger_care_reminder, trigger_checkin  # noqa: E402
 from services.ai import generate_weekly_report, display_first_name  # noqa: E402
 from services import appointments, auth, stt, translate, tts, whatsapp  # noqa: E402
@@ -147,7 +148,7 @@ async def staff_security(request: Request, call_next):
     path = request.url.path
     if not path.startswith("/api/") or path in PUBLIC_API_PATHS:
         return await call_next(request)
-    missing_config = missing_production_config()
+    missing_config = missing_messaging_config()
     if DB_ERROR:
         return JSONResponse({"detail": "Database unavailable", "error": DB_ERROR}, status_code=503)
     # The durable production database is non-negotiable. Other provider setup
@@ -624,7 +625,7 @@ class PatientProfileRequest(BaseModel):
 @app.post("/api/patients")
 async def enroll_patient(body: EnrollRequest, request: Request):
     require_admin(request)
-    missing_config = missing_production_config()
+    missing_config = missing_messaging_config()
     if missing_config and body.consent_granted:
         raise HTTPException(
             status_code=503,

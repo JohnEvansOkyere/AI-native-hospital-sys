@@ -94,7 +94,7 @@ is shared across both services.
 | `META_PHONE_NUMBER_ID` | sending WhatsApp replies |
 | `META_VERIFY_TOKEN` | webhook handshake |
 | `META_APP_SECRET` | **signature verification — set this in production** |
-| `META_MEDICATION_REMINDER_TEMPLATE` | approved daily reminder template — **required** |
+| `META_MEDICATION_REMINDER_TEMPLATE` | approved daily reminder template — required for scheduled reminders; without it `/health` reports degraded and reminders fail, but care-team messaging still works |
 | `CRON_SECRET` | authenticates scheduled reminder calls — **required** |
 | `INTRON_API_KEY` / `CARTESIA_API_KEY` / `OPENAI_API_KEY` | voice notes |
 | `WHATSAPP_STT_LANGUAGE` | voice-note language hint (default `en`) |
